@@ -57,10 +57,13 @@ def test_database_schedule_generation_persists_and_retrieves_assignments(client)
     assert result["solver_status"] in {"FEASIBLE", "OPTIMAL"}
     assert result["schedule_id"] is not None
     assert result["total_required_staff"] == result["total_assigned_staff"] == 4
+    assert result["total_excess_staff"] == 0
+    assert result["objective"]["excess_staff"] == 0
     assert len(result["assignments"]) == 4
     assert all(item["employee_id"] in {employee["id"] for employee in employees} for item in result["assignments"])
     assert all(item["shift_id"] in {shift["id"] for shift in shifts} for item in result["assignments"])
     assert all(item["regular_hours"] == 4 and item["overtime_hours"] == 0 for item in result["assignments"])
+    assert all(item["cost"] == item["hours"] * item["hourly_rate"] for item in result["assignments"])
     assert all(item["department"] in {"Operations", "Logistics"} for item in result["assignments"])
     assert result["total_cost"] == sum(item["cost"] for item in result["assignments"])
     assert result["total_regular_hours"] == 16

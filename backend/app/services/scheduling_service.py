@@ -30,8 +30,13 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
     return {
         "status": result.status, "solver_status": result.solver_status,
         "assignments": result.assignments, "unassigned_shifts": result.unassigned_shifts,
-        "employee_hours": result.employee_hours, "total_regular_hours": result.total_regular_hours,
+        "employee_hours": result.employee_hours,
+        "total_required_staff": result.total_required_staff,
+        "total_assigned_staff": result.total_assigned_staff,
+        "total_excess_staff": result.total_excess_staff,
+        "total_regular_hours": result.total_regular_hours,
         "total_overtime_hours": result.total_overtime_hours, "total_cost": result.total_cost,
+        "objective": result.objective,
     }
 
 
@@ -153,10 +158,12 @@ def generate_schedule_from_database(
         "status": result.status, "solver_status": result.solver_status,
         "schedule_id": None, "start_date": start_date, "end_date": end_date,
         "total_required_staff": total_required,
-        "total_assigned_staff": len(result.assignments),
+        "total_assigned_staff": result.total_assigned_staff,
+        "total_excess_staff": result.total_excess_staff,
         "total_cost": result.total_cost,
         "total_regular_hours": result.total_regular_hours,
         "total_overtime_hours": result.total_overtime_hours,
+        "objective": result.objective,
         "assignments": [],
         "unassigned_shifts": result.unassigned_shifts,
         "employee_hours": result.employee_hours,

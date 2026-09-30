@@ -140,6 +140,9 @@ def test_impossible_staffing_is_infeasible_without_fabricated_assignments():
     assert result["solver_status"] == "INFEASIBLE"
     assert result["assignments"] == []
     assert result["unassigned_shifts"] == [{"shift_id":"s","shift_name":"Shift"}]
+    assert result["total_required_staff"] == 5
+    assert result["total_assigned_staff"] == 0
+    assert result["total_excess_staff"] == 0
 
 def test_mapping_input_and_cross_department_opt_in():
     data={
@@ -152,3 +155,77 @@ def test_mapping_input_and_cross_department_opt_in():
     result=run(data)
     assert result["status"] == "FEASIBLE"
     assert result["assignments"][0]["employee_id"] == "it"
+
+
+def test_excess_staff_is_minimized_and_hard_minimum_is_preserved():
+    employees = tuple(Employee(f"e{i}", f"Employee {i}", "IT", hourly_rate=25) for i in range(4))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), required_staff=2, department="IT")
+    data = SchedulingInput(employees, (shift,), tuple(window(employee.id) for employee in employees))
+
+    result = run(data)
+
+    assert result["status"] == "FEASIBLE"
+    assert result["total_required_staff"] == 2
+    assert result["total_assigned_staff"] == 2
+    assert result["total_excess_staff"] == 0
+    assert result["objective"]["excess_staff"] == 0
+
+
+def test_lower_cost_pair_is_selected_when_staffing_is_equal():
+    employees = (
+        Employee("a", "A", "IT", hourly_rate=100),
+        Employee("b", "B", "IT", hourly_rate=100),
+        Employee("c", "C", "IT", hourly_rate=50),
+        Employee("d", "D", "IT", hourly_rate=50),
+    )
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), required_staff=2, department="IT")
+    result = run(SchedulingInput(employees, (shift,), tuple(window(item.id) for item in employees)))
+
+    assert result["total_excess_staff"] == 0
+    assert result["total_assigned_staff"] == 2
+    assert {item["employee_id"] for item in result["assignments"]} == {"c", "d"}
+    assert result["total_cost"] == 400
+
+
+def test_staffing_priority_beats_a_cheaper_overstaffed_alternative():
+    employees = (
+        Employee("expensive_a", "Expensive A", "IT", (SkillProficiency("A"),), hourly_rate=250),
+        Employee("expensive_bc", "Expensive BC", "IT", (SkillProficiency("B"), SkillProficiency("C")), hourly_rate=225),
+        Employee("cheap_a", "Cheap A", "IT", (SkillProficiency("A"),), hourly_rate=25),
+        Employee("cheap_b", "Cheap B", "IT", (SkillProficiency("B"),), hourly_rate=25),
+        Employee("cheap_c", "Cheap C", "IT", (SkillProficiency("C"),), hourly_rate=25),
+    )
+    shift = Shift(
+        "s", date(2026, 10, 5), time(9), time(13), required_staff=2, department="IT",
+        required_skills=(RequiredSkill("A"), RequiredSkill("B"), RequiredSkill("C")),
+    )
+    result = run(SchedulingInput(employees, (shift,), tuple(window(item.id) for item in employees)))
+
+    # Three specialists cost 300 but have one excess assignment. The best
+    # exact-staffing pair costs 1000, and the primary staffing objective wins.
+    assert result["status"] == "FEASIBLE"
+    assert result["total_required_staff"] == 2
+    assert result["total_assigned_staff"] == 2
+    assert result["total_excess_staff"] == 0
+    assert result["total_cost"] == 1000
+    assert result["objective"] == {"excess_staff": 0, "labor_cost": 1000}
+
+
+def test_result_cost_fields_and_overtime_are_consistent():
+    employees = (
+        Employee("a", "A", "IT", hourly_rate=50),
+        Employee("b", "B", "IT", hourly_rate=75),
+    )
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), required_staff=1, department="IT")
+    result = run(SchedulingInput(employees, (shift,), tuple(window(item.id) for item in employees)))
+
+    assert result["total_required_staff"] == 1
+    assert result["total_assigned_staff"] == 1
+    assert result["total_excess_staff"] == 0
+    assert result["total_cost"] == 200
+    assert result["objective"]["labor_cost"] == result["total_cost"]
+    assert result["total_overtime_hours"] == 0
+    for assignment in result["assignments"]:
+        assert assignment["cost"] == pytest.approx(assignment["hours"] * assignment["hourly_rate"])
+        assert assignment["regular_hours"] == assignment["hours"]
+        assert assignment["overtime_hours"] == 0
