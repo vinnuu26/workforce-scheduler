@@ -111,6 +111,7 @@ class SchedulingInput:
     preferences: tuple[EmployeePreference, ...] = ()
     projects: tuple[Project, ...] = ()
     project_requirements: tuple[ProjectRequirement, ...] = ()
+    department_exceptions: tuple[tuple[Identifier, Identifier], ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class DecisionVariables:

@@ -38,7 +38,9 @@ def employee_can_work_shift(employee: Employee, shift: Shift, data: SchedulingIn
         return False
     if round(employee.max_hours_per_week * 60) < shift.duration_minutes:
         return False
-    if not shift.allow_cross_department and shift.department is not None and employee.department != shift.department:
+    if (not shift.allow_cross_department and shift.department is not None
+            and employee.department != shift.department
+            and (employee.id, shift.id) not in data.department_exceptions):
         return False
     proficiency = {skill.name: skill.proficiency for skill in employee.skills}
     return all(
@@ -98,14 +100,16 @@ def add_required_skill_constraints(model: cp_model.CpModel, variables: dict, dat
         for requirement in shift.required_skills:
             qualified=[employee for employee in data.employees
                        if proficiency.get((employee.id, requirement.name), 0) >= requirement.minimum_proficiency
-                       and (shift.allow_cross_department or shift.department is None or employee.department == shift.department)]
+                       and (shift.allow_cross_department or shift.department is None or employee.department == shift.department
+                            or (employee.id, shift.id) in data.department_exceptions)]
             model.add(sum(variables[employee.id, shift.id] for employee in qualified) >= requirement.required_count)
 
 def add_department_constraints(model: cp_model.CpModel, variables: dict, data: SchedulingInput) -> None:
     for employee in data.employees:
         for shift in data.shifts:
             if (not shift.allow_cross_department and shift.department is not None
-                    and employee.department != shift.department):
+                    and employee.department != shift.department
+                    and (employee.id, shift.id) not in data.department_exceptions):
                 model.add(variables[employee.id, shift.id] == 0)
 
 def add_no_duplicate_constraints(model: cp_model.CpModel, variables: dict, data: SchedulingInput) -> None:

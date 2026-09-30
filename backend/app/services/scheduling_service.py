@@ -18,10 +18,22 @@ from app.optimizer.model import (
 )
 from app.optimizer.solver import solve_schedule
 from app.services.conflict_detection_service import detect_conflicts
+from app.conflicts.resolution import resolve_conflicts
 
 
 class SchedulingDataError(ValueError):
     """Raised when persisted inputs are malformed before optimization starts."""
+
+
+def resolve_conflicts_from_database(
+    db: Session, start_date: date, end_date: date, department_id: int | None = None,
+    project_id: int | None = None,
+) -> dict[str, Any]:
+    """Analyze temporary candidate inputs only; this function never writes to the session."""
+    data, _employees_by_id, _shifts_by_id = prepare_scheduling_input(
+        db, start_date, end_date, department_id, project_id,
+    )
+    return resolve_conflicts(data)
 
 
 def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[str, Any]:
