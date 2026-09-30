@@ -9,7 +9,7 @@ class ShiftTemplateCreate(APIModel): name:str; start_time:time; end_time:time; d
 class ShiftCreate(APIModel): date:date; department_id:int|None=None; template_id:int|None=None; start_time:time|None=None; end_time:time|None=None; required_staff:int=1
 class AvailabilityCreate(APIModel): employee_id:int; date:date; start_time:time|None=None; end_time:time|None=None; available:bool=True; notes:str|None=None
 class LeaveCreate(APIModel): employee_id:int; start_date:date; end_date:date; status:str="pending"; reason:str|None=None
-class PreferenceCreate(APIModel): employee_id:int; key:str; value:str; notes:str|None=None
+class PreferenceCreate(APIModel): employee_id:int; key:str; value:str; weight:float|None=1.0; notes:str|None=None
 class ProjectCreate(APIModel): name:str; status:str="planned"; description:str|None=None
 class RequirementCreate(APIModel): skill_id:int|None=None; role:str="staff"; quantity:int=1
 class ScheduleCreate(APIModel): name:str; start_date:date|None=None; end_date:date|None=None; status:str="draft"

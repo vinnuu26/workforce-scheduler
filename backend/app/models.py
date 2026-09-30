@@ -1,5 +1,5 @@
 from datetime import UTC, date, time, datetime
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Time, Table, Column, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Time, Table, Column, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -30,7 +30,7 @@ class Leave(Base):
     id: Mapped[int]=mapped_column(primary_key=True); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); start_date: Mapped[date]=mapped_column(Date); end_date: Mapped[date]=mapped_column(Date); status: Mapped[str]=mapped_column(String(40), default="pending"); reason: Mapped[str|None]=mapped_column(Text, default=None)
 class EmployeePreference(Base):
     __tablename__="employee_preferences"
-    id: Mapped[int]=mapped_column(primary_key=True); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); key: Mapped[str]=mapped_column(String(100)); value: Mapped[str]=mapped_column(String(255)); notes: Mapped[str|None]=mapped_column(Text, default=None)
+    id: Mapped[int]=mapped_column(primary_key=True); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); key: Mapped[str]=mapped_column(String(100)); value: Mapped[str]=mapped_column(String(255)); weight: Mapped[float|None]=mapped_column(Float, nullable=True, default=1.0, server_default="1.0"); notes: Mapped[str|None]=mapped_column(Text, default=None)
 class Project(Base):
     __tablename__="projects"
     id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); status: Mapped[str]=mapped_column(String(40), default="planned"); description: Mapped[str|None]=mapped_column(Text, default=None)

@@ -9,7 +9,10 @@ from ortools.sat.python import cp_model
 
 from .constraints import add_hard_constraints
 from .model import SchedulingInput, create_decision_variables
-from .objectives import excess_staff_expression, labor_cost_expression
+from .objectives import (
+    excess_staff_expression, labor_cost_expression, preference_metrics,
+    preference_score_expression,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +29,7 @@ class OptimizationResult:
     total_overtime_hours: float
     total_cost: float
     objective: dict[str, int | float]
+    preference: dict[str, Any]
 
 
 def _time_text(value: datetime) -> str:
@@ -50,7 +54,9 @@ def _empty_infeasible_result(data: SchedulingInput, solver_status: str) -> Optim
         total_required_staff=sum(shift.required_staff for shift in data.shifts),
         total_assigned_staff=0, total_excess_staff=0,
         total_regular_hours=0.0, total_overtime_hours=0.0, total_cost=0.0,
-        objective={"excess_staff": 0, "labor_cost": 0.0},
+        objective={"excess_staff": 0, "labor_cost": 0.0, "preference_score": 0.0},
+        preference={"total_weight": 0.0, "satisfied_weight": 0.0,
+                    "satisfaction_percentage": 0.0, "violated_preferences": []},
     )
 
 
@@ -59,9 +65,10 @@ def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> Opt
     add_hard_constraints(decisions.model, decisions.assignments, data)
     excess_expr = excess_staff_expression(decisions.assignments, data)
     cost_expr = labor_cost_expression(decisions.assignments, data)
+    preference_expr = preference_score_expression(decisions.assignments, data)
 
-    # Lexicographic optimization: prove the minimum excess first and constrain
-    # phase two to that value, so no cost reduction can buy extra staffing.
+    # Lexicographic optimization locks each proven optimum before proceeding:
+    # staffing can never be traded for cost, and cost can never be traded for preferences.
     decisions.model.minimize(excess_expr)
     staffing_solver = _new_solver(max_time_seconds)
     staffing_status = staffing_solver.solve(decisions.model)
@@ -80,11 +87,22 @@ def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> Opt
     decisions.model.minimize(cost_expr)
     cost_solver = _new_solver(max_time_seconds)
     cost_status = cost_solver.solve(decisions.model)
-    cost_status_name = cost_solver.status_name(cost_status)
     if cost_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         # The primary-optimal staffing solution remains a valid fallback.
         return _extract_result(data, decisions.assignments, staffing_solver, "FEASIBLE")
-    return _extract_result(data, decisions.assignments, cost_solver, cost_status_name)
+    if cost_status != cp_model.OPTIMAL:
+        return _extract_result(data, decisions.assignments, cost_solver, "FEASIBLE")
+
+    best_cost = int(cost_solver.value(cost_expr))
+    decisions.model.add(cost_expr == best_cost)
+    decisions.model.clear_objective()
+    decisions.model.maximize(preference_expr)
+    preference_solver = _new_solver(max_time_seconds)
+    preference_status = preference_solver.solve(decisions.model)
+    preference_status_name = preference_solver.status_name(preference_status)
+    if preference_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return _extract_result(data, decisions.assignments, cost_solver, "FEASIBLE")
+    return _extract_result(data, decisions.assignments, preference_solver, preference_status_name)
 
 
 def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp_model.CpSolver,
@@ -120,11 +138,18 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
     )
     total_regular_hours = round(sum(employee_minutes.values()) / 60, 2)
     total_cost = round(sum(assignment["cost"] for assignment in assignments), 2)
+    preference = preference_metrics(assignments, data)
+    preference_score = round(
+        preference["satisfied_weight"]
+        - sum(item["weight"] for item in preference["violated_preferences"]), 2,
+    )
     return OptimizationResult(
         status="FEASIBLE", solver_status=solver_status, assignments=assignments, unassigned_shifts=[],
         employee_hours=employee_hours, total_required_staff=total_required,
         total_assigned_staff=total_assigned, total_excess_staff=total_excess,
         total_regular_hours=total_regular_hours, total_overtime_hours=0.0,
         total_cost=total_cost,
-        objective={"excess_staff": total_excess, "labor_cost": total_cost},
+        objective={"excess_staff": total_excess, "labor_cost": total_cost,
+                   "preference_score": preference_score},
+        preference=preference,
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
+import math
 from typing import Any, Mapping
 
 from ortools.sat.python import cp_model
@@ -33,6 +34,13 @@ class LeavePeriod:
     start_date: date
     end_date: date
     status: str = "approved"
+
+@dataclass(frozen=True, slots=True)
+class EmployeePreference:
+    employee_id: Identifier
+    key: str
+    value: str
+    weight: float = 1.0
 
 @dataclass(frozen=True, slots=True)
 class Employee:
@@ -80,6 +88,7 @@ class SchedulingInput:
     shifts: tuple[Shift, ...]
     availability: tuple[AvailabilityWindow, ...] = ()
     leave: tuple[LeavePeriod, ...] = ()
+    preferences: tuple[EmployeePreference, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class DecisionVariables:
@@ -136,6 +145,14 @@ def _required_skills(raw: Any) -> tuple[RequiredSkill, ...]:
             result.append(RequiredSkill(str(item.name), int(getattr(item, "required_count", 1)), int(getattr(item, "minimum_proficiency", 1))))
     return tuple(result)
 
+def normalize_preference_weight(value: Any) -> float:
+    """Return a finite non-negative preference weight, defaulting to 1."""
+    try:
+        weight = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return weight if math.isfinite(weight) and weight >= 0 else 1.0
+
 def scheduling_input_from_mapping(raw: Mapping[str, Any]) -> SchedulingInput:
     """Convert basic dictionaries/JSON data to the optimizer's typed input."""
     employees=tuple(Employee(
@@ -162,7 +179,12 @@ def scheduling_input_from_mapping(raw: Mapping[str, Any]) -> SchedulingInput:
         employee_id=item.get("employee_id"), start_date=_as_date(item["start_date"]),
         end_date=_as_date(item["end_date"]), status=str(item.get("status", "approved")),
     ) for item in raw.get("leave", ()))
-    return SchedulingInput(employees=employees, shifts=shifts, availability=availability, leave=leave)
+    preferences=tuple(EmployeePreference(
+        employee_id=item["employee_id"], key=str(item.get("key", "")),
+        value=str(item.get("value", "")), weight=normalize_preference_weight(item.get("weight", 1.0)),
+    ) for item in raw.get("preferences", ()))
+    return SchedulingInput(employees=employees, shifts=shifts, availability=availability,
+                           leave=leave, preferences=preferences)
 
 def create_decision_variables(data: SchedulingInput) -> DecisionVariables:
     """Create exactly one BoolVar for each unique employee/shift pair."""

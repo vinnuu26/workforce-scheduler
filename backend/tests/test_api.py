@@ -41,7 +41,7 @@ def test_availability_leave_preference_and_projects(client):
     assert client.get("/api/leave",params={"employee_id":eid}).json()[0]["id"]==lid
     assert client.put(f"/api/leave/{lid}",json={"employee_id":eid,"start_date":"2026-10-02","end_date":"2026-10-04","status":"approved"}).status_code==200
     assert client.delete(f"/api/leave/{lid}").status_code==204
-    pref=client.post("/api/preferences",json={"employee_id":eid,"key":"weekend","value":"avoid"}); assert pref.status_code==201; pid=pref.json()["id"]
+    pref=client.post("/api/preferences",json={"employee_id":eid,"key":"weekend","value":"avoid"}); assert pref.status_code==201; pid=pref.json()["id"]; assert pref.json()["weight"]==1.0
     assert client.put(f"/api/preferences/{pid}",json={"employee_id":eid,"key":"weekend","value":"prefer"}).status_code==200
     assert client.delete(f"/api/preferences/{pid}").status_code==204
     project=client.post("/api/projects",json={"name":"Launch","status":"active"}); assert project.status_code==201; pr=project.json(); assert client.get(f"/api/projects/{pr['id']}").status_code==200

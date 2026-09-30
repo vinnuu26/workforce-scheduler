@@ -48,6 +48,12 @@ def seeded_workforce(client):
 
 def test_database_schedule_generation_persists_and_retrieves_assignments(client):
     departments, employees, shifts = seeded_workforce(client)
+    preference = client.post("/api/preferences", json={
+        "employee_id": employees[0]["id"], "key": "preferred_shift",
+        "value": "Day coverage", "weight": 10,
+    })
+    assert preference.status_code == 201
+    assert preference.json()["weight"] == 10
     response = client.post("/api/optimization/generate", json={
         "start_date": "2026-10-05", "end_date": "2026-10-06",
     })
@@ -59,6 +65,9 @@ def test_database_schedule_generation_persists_and_retrieves_assignments(client)
     assert result["total_required_staff"] == result["total_assigned_staff"] == 4
     assert result["total_excess_staff"] == 0
     assert result["objective"]["excess_staff"] == 0
+    assert result["preference"]["total_weight"] == 10
+    assert result["preference"]["satisfied_weight"] == 10
+    assert result["preference"]["satisfaction_percentage"] == 100
     assert len(result["assignments"]) == 4
     assert all(item["employee_id"] in {employee["id"] for employee in employees} for item in result["assignments"])
     assert all(item["shift_id"] in {shift["id"] for shift in shifts} for item in result["assignments"])

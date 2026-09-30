@@ -2,7 +2,7 @@ from datetime import date, datetime, time
 
 import pytest
 
-from app.optimizer.model import AvailabilityWindow, Employee, LeavePeriod, RequiredSkill, SchedulingInput, Shift, SkillProficiency
+from app.optimizer.model import AvailabilityWindow, Employee, EmployeePreference, LeavePeriod, RequiredSkill, SchedulingInput, Shift, SkillProficiency
 from app.services.scheduling_service import generate_schedule
 
 
@@ -208,7 +208,8 @@ def test_staffing_priority_beats_a_cheaper_overstaffed_alternative():
     assert result["total_assigned_staff"] == 2
     assert result["total_excess_staff"] == 0
     assert result["total_cost"] == 1000
-    assert result["objective"] == {"excess_staff": 0, "labor_cost": 1000}
+    assert result["objective"]["excess_staff"] == 0
+    assert result["objective"]["labor_cost"] == 1000
 
 
 def test_result_cost_fields_and_overtime_are_consistent():
@@ -229,3 +230,169 @@ def test_result_cost_fields_and_overtime_are_consistent():
         assert assignment["cost"] == pytest.approx(assignment["hours"] * assignment["hourly_rate"])
         assert assignment["regular_hours"] == assignment["hours"]
         assert assignment["overtime_hours"] == 0
+
+
+def _preference_window(employee):
+    return window(employee.id, "2026-10-05T00:00", "2026-10-12T23:59")
+
+
+def _preference_result(employees, shift, preferences, availability=None, leave=()):
+    if availability is None:
+        availability = tuple(_preference_window(employee) for employee in employees)
+    data = SchedulingInput(tuple(employees), (shift,), tuple(availability), tuple(leave), tuple(preferences))
+    return run(data)
+
+
+def test_preferred_shift_is_satisfied_and_weighted():
+    employees = (Employee("a", "A", "Ops", hourly_rate=20), Employee("b", "B", "Ops", hourly_rate=20))
+    shift = Shift("s", date(2026, 10, 5), time(8), time(12), name="Morning", department="Ops")
+    result = _preference_result(employees, shift, (EmployeePreference("a", "preferred_shift", "Morning", 10),))
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["a"]
+    assert result["preference"] == {
+        "total_weight": 10.0, "satisfied_weight": 10.0,
+        "satisfaction_percentage": 100.0, "violated_preferences": [],
+    }
+    assert result["assignments"][0]["preference_match"] is True
+
+
+def test_avoid_shift_preference_selects_employee_without_conflicting_preference():
+    employees = (Employee("a", "A", "Ops", hourly_rate=20), Employee("b", "B", "Ops", hourly_rate=20))
+    shift = Shift("s", date(2026, 10, 5), time(22), time(6), name="Night", department="Ops")
+    result = _preference_result(employees, shift, (EmployeePreference("a", "avoid_shift", "Night", 10),))
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["b"]
+    assert result["total_cost"] == 160
+    assert result["preference"]["violated_preferences"] == []
+
+
+def test_preferred_day_is_satisfied():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Day", department="Ops")
+    result = _preference_result(employees, shift, (EmployeePreference("a", "preferred_day", "Monday", 7),))
+
+    assert result["assignments"][0]["employee_id"] == "a"
+    assert result["preference"]["satisfied_weight"] == 7
+    assert result["preference"]["satisfaction_percentage"] == 100
+
+
+def test_avoid_weekend_selects_employee_without_weekend_preference():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 10), time(9), time(13), name="Day", department="Ops")
+    result = _preference_result(employees, shift, (EmployeePreference("a", "avoid_weekend", "true", 10),))
+
+    assert result["assignments"][0]["employee_id"] == "b"
+
+
+def test_preference_weight_changes_choice_and_invalid_weight_defaults_to_one():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Morning", department="Ops")
+    preferences = (
+        EmployeePreference("a", "preferred_shift", "Morning", 10),
+        EmployeePreference("b", "preferred_shift", "Morning", -4),
+    )
+    result = _preference_result(employees, shift, preferences)
+
+    assert result["assignments"][0]["employee_id"] == "a"
+    assert result["preference"]["total_weight"] == 10
+    assert result["preference"]["satisfied_weight"] == 10
+
+
+def test_preference_violations_and_satisfaction_percentage_are_reported():
+    employee = Employee("a", "A", "Ops")
+    shift = Shift("s", date(2026, 10, 5), time(22), time(6), name="Night", department="Ops")
+    result = _preference_result((employee,), shift, (EmployeePreference("a", "preferred_shift", "Morning", 10),))
+
+    preference = result["preference"]
+    assert preference["total_weight"] == 10
+    assert preference["satisfied_weight"] == 0
+    assert preference["satisfaction_percentage"] == 0
+    assert len(preference["violated_preferences"]) == 1
+    assert preference["violated_preferences"][0]["weight"] == 10
+    assert result["assignments"][0]["preference_match"] is False
+
+
+def test_preference_never_overrides_availability():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Morning", department="Ops")
+    availability = (window("b", "2026-10-05T00:00", "2026-10-05T23:59"),)
+    result = _preference_result(
+        employees, shift, (EmployeePreference("a", "preferred_shift", "Morning", 100),), availability,
+    )
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["b"]
+
+
+def test_preference_never_overrides_approved_leave():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Morning", department="Ops")
+    leave = (LeavePeriod("a", date(2026, 10, 5), date(2026, 10, 5), "approved"),)
+    result = _preference_result(
+        employees, shift, (EmployeePreference("a", "preferred_shift", "Morning", 100),), leave=leave,
+    )
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["b"]
+
+
+def test_preference_never_overrides_maximum_hours():
+    employees = (Employee("a", "A", "Ops", max_hours_per_week=0), Employee("b", "B", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Morning", department="Ops")
+    result = _preference_result(employees, shift, (EmployeePreference("a", "preferred_shift", "Morning", 100),))
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["b"]
+
+
+def test_preference_never_overrides_skill_or_department_constraints():
+    skilled_same_department = Employee("b", "B", "Ops", (SkillProficiency("Certified"),))
+    unskilled_same_department = Employee("a", "A", "Ops")
+    other_department = Employee("c", "C", "Other", (SkillProficiency("Certified"),))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), name="Morning", department="Ops",
+                  required_skills=(RequiredSkill("Certified"),))
+    result = _preference_result(
+        (unskilled_same_department, other_department, skilled_same_department), shift,
+        (EmployeePreference("a", "preferred_shift", "Morning", 1000),),
+    )
+
+    assert [item["employee_id"] for item in result["assignments"]] == ["b"]
+
+
+def test_preference_is_tertiary_after_staffing_and_labor_cost():
+    employees = (
+        Employee("cheap", "Cheap", "Ops", hourly_rate=10),
+        Employee("preferred", "Preferred", "Ops", hourly_rate=100),
+    )
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), required_staff=1,
+                  name="Morning", department="Ops")
+    result = _preference_result(
+        employees, shift, (EmployeePreference("preferred", "preferred_shift", "Morning", 1000),),
+    )
+
+    assert result["total_excess_staff"] == 0
+    assert result["total_cost"] == 40
+    assert result["assignments"][0]["employee_id"] == "cheap"
+
+
+def test_preference_objective_cannot_add_excess_staff():
+    employees = (Employee("a", "A", "Ops"), Employee("b", "B", "Ops"), Employee("c", "C", "Ops"))
+    shift = Shift("s", date(2026, 10, 5), time(9), time(13), required_staff=1,
+                  name="Morning", department="Ops")
+    preferences = tuple(EmployeePreference(item.id, "preferred_shift", "Morning", 10) for item in employees)
+    result = _preference_result(employees, shift, preferences)
+
+    assert result["total_required_staff"] == 1
+    assert result["total_assigned_staff"] == 1
+    assert result["total_excess_staff"] == 0
+
+
+def test_mapping_input_accepts_preferences_and_defaults_missing_weight():
+    raw = {
+        "employees": [{"id": "a", "name": "A", "department": "Ops"}],
+        "shifts": [{"id": "s", "date": "2026-10-05", "start_time": "09:00", "end_time": "13:00",
+                    "name": "Morning", "department": "Ops"}],
+        "availability": [{"employee_id": "a", "start": "2026-10-05T00:00", "end": "2026-10-05T23:59"}],
+        "preferences": [{"employee_id": "a", "key": "preferred_shift", "value": "Morning"}],
+    }
+    result = run(raw)
+
+    assert result["preference"]["total_weight"] == 1
+    assert result["preference"]["satisfied_weight"] == 1

@@ -11,9 +11,9 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app import models
 from app.optimizer.model import (
-    AvailabilityWindow, Employee as OptimizerEmployee, LeavePeriod,
+    AvailabilityWindow, Employee as OptimizerEmployee, EmployeePreference as OptimizerPreference, LeavePeriod,
     RequiredSkill, SchedulingInput, Shift as OptimizerShift, SkillProficiency,
-    scheduling_input_from_mapping,
+    normalize_preference_weight, scheduling_input_from_mapping,
 )
 from app.optimizer.solver import solve_schedule
 
@@ -36,7 +36,7 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
         "total_excess_staff": result.total_excess_staff,
         "total_regular_hours": result.total_regular_hours,
         "total_overtime_hours": result.total_overtime_hours, "total_cost": result.total_cost,
-        "objective": result.objective,
+        "objective": result.objective, "preference": result.preference,
     }
 
 
@@ -125,6 +125,10 @@ def prepare_scheduling_input(
         if item.end_date < item.start_date:
             raise SchedulingDataError(f"Leave {item.id} has end_date before start_date")
 
+    preference_rows = list(db.scalars(select(models.EmployeePreference).where(
+        models.EmployeePreference.employee_id.in_(employee_ids),
+    ).order_by(models.EmployeePreference.id)).all())
+
     optimizer_employees = tuple(OptimizerEmployee(
         id=item.id, name=item.name,
         department=item.department.name if item.department else None,
@@ -142,9 +146,13 @@ def prepare_scheduling_input(
         required_staff=item.required_staff,
         required_skills=tuple(RequiredSkill(skill.name) for skill in item.required_skills),
     ) for item in shifts)
+    optimizer_preferences = tuple(OptimizerPreference(
+        employee_id=item.employee_id, key=item.key, value=item.value,
+        weight=normalize_preference_weight(item.weight),
+    ) for item in preference_rows)
     return SchedulingInput(optimizer_employees, optimizer_shifts, tuple(availability), tuple(
         LeavePeriod(item.employee_id, item.start_date, item.end_date, item.status) for item in leave_rows
-    )), {item.id: item for item in employees}, {item.id: item for item in shifts}
+    ), optimizer_preferences), {item.id: item for item in employees}, {item.id: item for item in shifts}
 
 
 def generate_schedule_from_database(
@@ -164,6 +172,7 @@ def generate_schedule_from_database(
         "total_regular_hours": result.total_regular_hours,
         "total_overtime_hours": result.total_overtime_hours,
         "objective": result.objective,
+        "preference": result.preference,
         "assignments": [],
         "unassigned_shifts": result.unassigned_shifts,
         "employee_hours": result.employee_hours,
