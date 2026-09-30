@@ -1,0 +1,21 @@
+# JavaScript dependencies
+**/node_modules/
+
+# Python bytecode and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Python virtual environments
+.venv/
+venv/
+
+# Local environment and database files
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
