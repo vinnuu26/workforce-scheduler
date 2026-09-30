@@ -39,7 +39,22 @@ def remove_requirement(project_id:int,requirement_id:int,db:Session=Depends(get_
  db.delete(obj); db.commit()
 @router.get("/schedules/{schedule_id}/assignments")
 def assignments(schedule_id:int,db:Session=Depends(get_db)):
- get_item(db,models.Schedule,schedule_id); return [data(x) for x in list_items(db,models.ScheduleAssignment,0,500,{"schedule_id":schedule_id})]
+ get_item(db,models.Schedule,schedule_id)
+ rows=list_items(db,models.ScheduleAssignment,0,500,{"schedule_id":schedule_id})
+ result=[]
+ for item in rows:
+  employee=get_item(db,models.Employee,item.employee_id); shift=get_item(db,models.Shift,item.shift_id)
+  department=db.get(models.Department,shift.department_id) if shift.department_id is not None else None
+  template=db.get(models.ShiftTemplate,shift.template_id) if shift.template_id is not None else None
+  start=shift.start_time or (template.start_time if template else None)
+  end=shift.end_time or (template.end_time if template else None)
+  result.append({"id":item.id,"schedule_id":item.schedule_id,"employee_id":item.employee_id,
+   "employee_name":employee.name,"shift_id":item.shift_id,
+   "shift_name":template.name if template else f"Shift {shift.id}","shift_date":shift.date,
+   "start_time":start,"end_time":end,"department":department.name if department else None,
+   "hours":item.regular_hours+item.overtime_hours,"regular_hours":item.regular_hours,
+   "overtime_hours":item.overtime_hours,"cost":item.cost,"notes":item.notes})
+ return result
 @router.post("/schedules/{schedule_id}/assignments",status_code=201)
 def add_assignment(schedule_id:int,payload:schemas.AssignmentCreate,db:Session=Depends(get_db)):
  get_item(db,models.Schedule,schedule_id); get_item(db,models.Employee,payload.employee_id); get_item(db,models.Shift,payload.shift_id)

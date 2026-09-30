@@ -13,7 +13,7 @@ class Skill(Base):
     id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(120), unique=True, index=True); description: Mapped[str|None]=mapped_column(Text, default=None)
 class Employee(Base):
     __tablename__="employees"
-    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); email: Mapped[str]=mapped_column(String(255), unique=True, index=True); department_id: Mapped[int|None]=mapped_column(ForeignKey("departments.id"), default=None); active: Mapped[bool]=mapped_column(Boolean, default=True)
+    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); email: Mapped[str]=mapped_column(String(255), unique=True, index=True); department_id: Mapped[int|None]=mapped_column(ForeignKey("departments.id"), default=None); active: Mapped[bool]=mapped_column(Boolean, default=True); hourly_rate: Mapped[float]=mapped_column(default=0.0); max_hours_per_week: Mapped[float]=mapped_column(default=40.0)
     department=relationship(Department); skills=relationship(Skill, secondary=employee_skills)
 class ShiftTemplate(Base):
     __tablename__="shift_templates"
@@ -39,10 +39,10 @@ class ProjectRequirement(Base):
     id: Mapped[int]=mapped_column(primary_key=True); project_id: Mapped[int]=mapped_column(ForeignKey("projects.id", ondelete="CASCADE")); skill_id: Mapped[int|None]=mapped_column(ForeignKey("skills.id"), default=None); role: Mapped[str]=mapped_column(String(120), default="staff"); quantity: Mapped[int]=mapped_column(Integer, default=1)
 class Schedule(Base):
     __tablename__="schedules"
-    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); start_date: Mapped[date|None]=mapped_column(Date, default=None); end_date: Mapped[date|None]=mapped_column(Date, default=None); status: Mapped[str]=mapped_column(String(40), default="draft"); created_at: Mapped[datetime]=mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); start_date: Mapped[date|None]=mapped_column(Date, default=None); end_date: Mapped[date|None]=mapped_column(Date, default=None); status: Mapped[str]=mapped_column(String(40), default="draft"); objective_value: Mapped[float|None]=mapped_column(default=None); total_cost: Mapped[float]=mapped_column(default=0.0); overtime_hours: Mapped[float]=mapped_column(default=0.0); created_at: Mapped[datetime]=mapped_column(DateTime, default=lambda: datetime.now(UTC))
 class ScheduleAssignment(Base):
     __tablename__="schedule_assignments"
-    id: Mapped[int]=mapped_column(primary_key=True); schedule_id: Mapped[int]=mapped_column(ForeignKey("schedules.id", ondelete="CASCADE")); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); shift_id: Mapped[int]=mapped_column(ForeignKey("shifts.id")); notes: Mapped[str|None]=mapped_column(Text, default=None)
+    id: Mapped[int]=mapped_column(primary_key=True); schedule_id: Mapped[int]=mapped_column(ForeignKey("schedules.id", ondelete="CASCADE")); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); shift_id: Mapped[int]=mapped_column(ForeignKey("shifts.id")); regular_hours: Mapped[float]=mapped_column(default=0.0); overtime_hours: Mapped[float]=mapped_column(default=0.0); cost: Mapped[float]=mapped_column(default=0.0); notes: Mapped[str|None]=mapped_column(Text, default=None)
 class ScheduleConflict(Base):
     __tablename__="schedule_conflicts"
     id: Mapped[int]=mapped_column(primary_key=True); schedule_id: Mapped[int]=mapped_column(ForeignKey("schedules.id", ondelete="CASCADE")); message: Mapped[str]=mapped_column(Text); details: Mapped[str|None]=mapped_column(Text, default=None)

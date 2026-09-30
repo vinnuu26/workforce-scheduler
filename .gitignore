@@ -1,5 +1,7 @@
 # JavaScript dependencies
 **/node_modules/
+frontend/dist/
+frontend/.npm-cache/
 
 # Python bytecode and test caches
 __pycache__/
