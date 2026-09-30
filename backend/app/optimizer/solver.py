@@ -10,7 +10,7 @@ from ortools.sat.python import cp_model
 from .constraints import add_hard_constraints
 from .model import SchedulingInput, create_decision_variables
 from .objectives import (
-    excess_staff_expression, labor_cost_expression, preference_metrics,
+    excess_staff_expression, fairness_expressions, fairness_metrics, labor_cost_expression, preference_metrics,
     preference_score_expression,
 )
 
@@ -30,6 +30,7 @@ class OptimizationResult:
     total_cost: float
     objective: dict[str, int | float]
     preference: dict[str, Any]
+    fairness: dict[str, Any]
 
 
 def _time_text(value: datetime) -> str:
@@ -57,6 +58,7 @@ def _empty_infeasible_result(data: SchedulingInput, solver_status: str) -> Optim
         objective={"excess_staff": 0, "labor_cost": 0.0, "preference_score": 0.0},
         preference={"total_weight": 0.0, "satisfied_weight": 0.0,
                     "satisfaction_percentage": 0.0, "violated_preferences": []},
+        fairness=fairness_metrics([], data),
     )
 
 
@@ -66,6 +68,9 @@ def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> Opt
     excess_expr = excess_staff_expression(decisions.assignments, data)
     cost_expr = labor_cost_expression(decisions.assignments, data)
     preference_expr = preference_score_expression(decisions.assignments, data)
+    hour_fairness_expr, night_fairness_expr, weekend_fairness_expr = fairness_expressions(
+        decisions.model, decisions.assignments, data,
+    )
 
     # Lexicographic optimization locks each proven optimum before proceeding:
     # staffing can never be traded for cost, and cost can never be traded for preferences.
@@ -102,7 +107,28 @@ def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> Opt
     preference_status_name = preference_solver.status_name(preference_status)
     if preference_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return _extract_result(data, decisions.assignments, cost_solver, "FEASIBLE")
-    return _extract_result(data, decisions.assignments, preference_solver, preference_status_name)
+    if preference_status != cp_model.OPTIMAL:
+        return _extract_result(data, decisions.assignments, preference_solver, "FEASIBLE")
+
+    # Fairness is a three-phase lexicographic objective after all established goals.
+    best_preference = int(preference_solver.value(preference_expr))
+    decisions.model.add(preference_expr == best_preference)
+    fairness_phases = (hour_fairness_expr, night_fairness_expr, weekend_fairness_expr)
+    current_solver = preference_solver
+    for phase_index, expression in enumerate(fairness_phases):
+        if phase_index:
+            decisions.model.add(fairness_phases[phase_index - 1] == best_fairness)
+        decisions.model.clear_objective()
+        decisions.model.minimize(expression)
+        phase_solver = _new_solver(max_time_seconds)
+        phase_status = phase_solver.solve(decisions.model)
+        if phase_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return _extract_result(data, decisions.assignments, current_solver, "FEASIBLE")
+        current_solver = phase_solver
+        if phase_status != cp_model.OPTIMAL:
+            return _extract_result(data, decisions.assignments, current_solver, "FEASIBLE")
+        best_fairness = int(phase_solver.value(expression))
+    return _extract_result(data, decisions.assignments, current_solver, "OPTIMAL")
 
 
 def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp_model.CpSolver,
@@ -139,6 +165,7 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
     total_regular_hours = round(sum(employee_minutes.values()) / 60, 2)
     total_cost = round(sum(assignment["cost"] for assignment in assignments), 2)
     preference = preference_metrics(assignments, data)
+    fairness = fairness_metrics(assignments, data)
     preference_score = round(
         preference["satisfied_weight"]
         - sum(item["weight"] for item in preference["violated_preferences"]), 2,
@@ -151,5 +178,5 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
         total_cost=total_cost,
         objective={"excess_staff": total_excess, "labor_cost": total_cost,
                    "preference_score": preference_score},
-        preference=preference,
+        preference=preference, fairness=fairness,
     )

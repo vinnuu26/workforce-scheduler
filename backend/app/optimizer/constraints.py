@@ -30,6 +30,22 @@ def _on_approved_leave(employee_id: int | str, shift: Shift, leave: tuple[LeaveP
     return any(item.employee_id == employee_id and item.status.casefold() == "approved"
                and item.start_date <= final_day and shift.date <= item.end_date for item in leave)
 
+def employee_can_work_shift(employee: Employee, shift: Shift, data: SchedulingInput) -> bool:
+    """Return whether an employee is individually eligible for a shift."""
+    if not employee.active or not _availability_covers(employee.id, shift, data.availability):
+        return False
+    if _on_approved_leave(employee.id, shift, data.leave):
+        return False
+    if round(employee.max_hours_per_week * 60) < shift.duration_minutes:
+        return False
+    if not shift.allow_cross_department and shift.department is not None and employee.department != shift.department:
+        return False
+    proficiency = {skill.name: skill.proficiency for skill in employee.skills}
+    return all(
+        proficiency.get(requirement.name, 0) >= requirement.minimum_proficiency
+        for requirement in shift.required_skills
+    )
+
 def _weekly_key(shift: Shift) -> tuple[int, int]:
     week=shift.date.isocalendar()
     return week.year, week.week

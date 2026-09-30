@@ -68,6 +68,10 @@ def test_database_schedule_generation_persists_and_retrieves_assignments(client)
     assert result["preference"]["total_weight"] == 10
     assert result["preference"]["satisfied_weight"] == 10
     assert result["preference"]["satisfaction_percentage"] == 100
+    assert result["fairness"]["target_hours"] == 3.2
+    assert result["fairness"]["total_hour_deviation"] >= 0
+    assert set(result["fairness"]["night_shift_counts"]) == {str(employee["id"]) for employee in employees}
+    assert set(result["fairness"]["weekend_shift_counts"]) == {str(employee["id"]) for employee in employees}
     assert len(result["assignments"]) == 4
     assert all(item["employee_id"] in {employee["id"] for employee in employees} for item in result["assignments"])
     assert all(item["shift_id"] in {shift["id"] for shift in shifts} for item in result["assignments"])

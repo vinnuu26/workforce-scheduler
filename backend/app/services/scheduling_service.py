@@ -37,6 +37,7 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
         "total_regular_hours": result.total_regular_hours,
         "total_overtime_hours": result.total_overtime_hours, "total_cost": result.total_cost,
         "objective": result.objective, "preference": result.preference,
+        "fairness": result.fairness,
     }
 
 
@@ -173,6 +174,7 @@ def generate_schedule_from_database(
         "total_overtime_hours": result.total_overtime_hours,
         "objective": result.objective,
         "preference": result.preference,
+        "fairness": result.fairness,
         "assignments": [],
         "unassigned_shifts": result.unassigned_shifts,
         "employee_hours": result.employee_hours,

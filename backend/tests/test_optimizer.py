@@ -396,3 +396,112 @@ def test_mapping_input_accepts_preferences_and_defaults_missing_weight():
 
     assert result["preference"]["total_weight"] == 1
     assert result["preference"]["satisfied_weight"] == 1
+
+
+def fairness_input(shifts, employees=None, preferences=(), leave=(), availability=None):
+    employees = tuple(employees or (
+        Employee("a", "A", "Ops", hourly_rate=20),
+        Employee("b", "B", "Ops", hourly_rate=20),
+        Employee("c", "C", "Ops", hourly_rate=20),
+    ))
+    availability = availability or tuple(
+        AvailabilityWindow(item.id, datetime(2026, 10, 1), datetime(2026, 10, 20))
+        for item in employees
+    )
+    return SchedulingInput(employees, tuple(shifts), tuple(availability), tuple(leave), tuple(preferences))
+
+
+def test_fairness_balances_hours_and_reports_target_deviations_and_scores():
+    shifts = tuple(Shift(f"s{day}", date(2026, 10, day), time(8), time(12), department="Ops")
+                   for day in range(5, 11))
+    result = run(fairness_input(shifts))
+    fairness = result["fairness"]
+
+    assert fairness["target_hours"] == 8
+    assert fairness["total_hour_deviation"] == 0
+    assert set(fairness["hour_deviations"].values()) == {0}
+    assert set(result["employee_hours"].values()) == {8}
+    assert fairness["hour_balance_score"] == 1
+    assert fairness["night_shift_range"] == 0
+    assert fairness["weekend_shift_range"] == 1
+
+
+def test_night_and_weekend_shifts_are_balanced_after_hours():
+    dates = (date(2026, 10, 3), date(2026, 10, 4), date(2026, 10, 5),
+             date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8))
+    night_shifts = tuple(Shift(f"n{i}", day, time(22), time(6), department="Ops")
+                         for i, day in enumerate(dates))
+    result = run(fairness_input(night_shifts))
+    fairness = result["fairness"]
+
+    assert fairness["target_hours"] == 16
+    assert sorted(fairness["night_shift_counts"].values()) == [2, 2, 2]
+    assert fairness["night_shift_range"] == 0
+    assert sorted(fairness["weekend_shift_counts"].values()) == [0, 1, 1]
+    assert fairness["weekend_shift_range"] == 1
+
+
+def test_preference_priority_remains_above_hour_fairness():
+    employees = (Employee("favored", "Favored", "Ops"), Employee("other", "Other", "Ops"))
+    shifts = tuple(Shift(f"s{i}", date(2026, 10, 5 + i), time(8), time(12), name="Morning", department="Ops")
+                   for i in range(3))
+    preferences = (EmployeePreference("favored", "preferred_shift", "Morning", 10),)
+    result = run(fairness_input(shifts, employees, preferences))
+
+    assert result["preference"]["satisfied_weight"] == 30
+    assert result["employee_hours"]["favored"] == 12
+    assert result["fairness"]["total_hour_deviation"] == 12
+
+
+def test_fairness_never_overrides_availability_leave_or_maximum_hours():
+    employees = (Employee("a", "A", "Ops", max_hours_per_week=4), Employee("b", "B", "Ops"))
+    shifts = (Shift("s1", date(2026, 10, 5), time(8), time(12), department="Ops"),
+              Shift("s2", date(2026, 10, 6), time(8), time(12), department="Ops"))
+    availability = (AvailabilityWindow("a", datetime(2026, 10, 5), datetime(2026, 10, 5, 12)),
+                    AvailabilityWindow("b", datetime(2026, 10, 5), datetime(2026, 10, 7)))
+    leave = (LeavePeriod("a", date(2026, 10, 6), date(2026, 10, 6)),)
+    result = run(fairness_input(shifts, employees, leave=leave, availability=availability))
+
+    assert len(result["assignments"]) == 2
+    assert all(item["employee_id"] == "a" for item in result["assignments"] if item["shift_id"] == "s1")
+    assert all(item["employee_id"] == "b" for item in result["assignments"] if item["shift_id"] == "s2")
+    assert result["employee_hours"]["a"] <= 4
+
+
+def test_fairness_never_overrides_required_skill_or_department():
+    employees = (Employee("unskilled", "Unskilled", "Ops"),
+                 Employee("wrong_dept", "Wrong Dept", "Other", (SkillProficiency("Certified"),)),
+                 Employee("qualified", "Qualified", "Ops", (SkillProficiency("Certified"),)))
+    shift = Shift("s", date(2026, 10, 5), time(8), time(12), department="Ops",
+                  required_skills=(RequiredSkill("Certified"),))
+    result = run(fairness_input((shift,), employees))
+
+    assert [assignment["employee_id"] for assignment in result["assignments"]] == ["qualified"]
+    assert result["fairness"]["target_hours"] == 1.33
+
+
+def test_cost_priority_remains_above_hour_fairness():
+    employees = (Employee("cheap", "Cheap", "Ops", hourly_rate=10),
+                 Employee("expensive", "Expensive", "Ops", hourly_rate=100))
+    shifts = tuple(Shift(f"s{i}", date(2026, 10, 5 + i), time(8), time(12), department="Ops")
+                   for i in range(2))
+    result = run(fairness_input(shifts, employees))
+
+    assert result["total_cost"] == 80
+    assert result["employee_hours"]["cheap"] == 8
+    assert result["employee_hours"]["expensive"] == 0
+
+
+def test_fairness_cannot_increase_excess_staff_and_infeasibility_is_preserved():
+    employees = tuple(Employee(item, item, "Ops") for item in ("a", "b", "c"))
+    shift = Shift("s", date(2026, 10, 5), time(8), time(12), required_staff=1, department="Ops")
+    result = run(fairness_input((shift,), employees))
+    assert result["total_excess_staff"] == 0
+    assert result["total_assigned_staff"] == 1
+
+    unavailable = tuple(AvailabilityWindow(item.id, datetime(2026, 10, 6), datetime(2026, 10, 7))
+                        for item in employees)
+    impossible = run(fairness_input((shift,), employees, availability=unavailable))
+    assert impossible["status"] == "INFEASIBLE"
+    assert impossible["assignments"] == []
+    assert "fairness" in impossible

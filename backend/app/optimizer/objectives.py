@@ -91,10 +91,22 @@ def preference_evaluation(preference: EmployeePreference, shift: Shift) -> tuple
 
 
 def preference_score_expression(assignments: dict, data: SchedulingInput):
-    """Weighted satisfied assignments minus weighted preference violations."""
+    """Integer-scaled weighted satisfaction minus violations for exact locking."""
     preferences_by_employee: dict[Any, list[EmployeePreference]] = {}
     for preference in data.preferences:
         preferences_by_employee.setdefault(preference.employee_id, []).append(preference)
+    precision = 0
+    for preference in data.preferences:
+        weight = Decimal(str(normalize_preference_weight(preference.weight)))
+        precision = max(precision, max(0, -weight.as_tuple().exponent))
+    scale = 10 ** precision
+    known_employee_ids = {employee.id for employee in data.employees}
+    objective_bound = sum(
+        int(Decimal(str(normalize_preference_weight(preference.weight))) * scale) * len(data.shifts)
+        for preference in data.preferences if preference.employee_id in known_employee_ids
+    )
+    if objective_bound >= 2**62:
+        raise ValueError("Combined weighted-preference objective exceeds the supported integer range")
     terms = []
     for employee in data.employees:
         for shift in data.shifts:
@@ -103,10 +115,113 @@ def preference_score_expression(assignments: dict, data: SchedulingInput):
                 if evaluation is None:
                     continue
                 satisfied, _reason = evaluation
-                weight = normalize_preference_weight(preference.weight)
+                weight = int(Decimal(str(normalize_preference_weight(preference.weight))) * scale)
                 if weight:
                     terms.append(assignments[employee.id, shift.id] * (weight if satisfied else -weight))
     return sum(terms)
+
+
+def fairness_expressions(model, assignments: dict, data: SchedulingInput):
+    """Build lexicographic fairness expressions for hours, nights, then weekends.
+
+    Hours are represented in minutes. For a fixed assigned-work total, minimizing
+    sum(abs(employee_minutes * employee_count - total_minutes)) is equivalent to
+    minimizing absolute deviation from the mean target without fractional CP-SAT
+    coefficients. Night/weekend balance is measured over employees eligible for
+    those shifts so employees who cannot work them do not count as unfairly low.
+    """
+    active = [employee for employee in data.employees if employee.active]
+    employee_count = len(active)
+    total_minutes = sum(
+        assignments[employee.id, shift.id] * shift.duration_minutes
+        for employee in active for shift in data.shifts
+    )
+    hour_deviation_terms = []
+    for index, employee in enumerate(data.employees):
+        if not employee.active or not employee_count:
+            continue
+        minutes = sum(
+            assignments[employee.id, shift.id] * shift.duration_minutes
+            for shift in data.shifts
+        )
+        upper = max(1, employee_count * sum(shift.duration_minutes for shift in data.shifts))
+        deviation = model.new_int_var(0, upper, f"hour_deviation_{index}")
+        model.add_abs_equality(deviation, employee_count * minutes - total_minutes)
+        hour_deviation_terms.append(deviation)
+
+    def shift_count_expr(eligible_employees, selected_shifts, label):
+        count = len(eligible_employees)
+        if count == 0:
+            return 0
+        total = sum(assignments[employee.id, shift.id]
+                    for employee in eligible_employees for shift in selected_shifts)
+        terms = []
+        for index, employee in enumerate(eligible_employees):
+            employee_count_expr = sum(assignments[employee.id, shift.id] for shift in selected_shifts)
+            deviation = model.new_int_var(0, max(1, count * len(selected_shifts)), f"{label}_deviation_{index}")
+            model.add_abs_equality(deviation, count * employee_count_expr - total)
+            terms.append(deviation)
+        return sum(terms)
+
+    hour_expr = sum(hour_deviation_terms)
+    night_shifts = [shift for shift in data.shifts if shift.starts_at.hour >= 20 or shift.ends_at.hour <= 6 or shift.ends_at.date() > shift.starts_at.date()]
+    weekend_shifts = [shift for shift in data.shifts if shift.date.weekday() >= 5]
+    # Count employees with at least one hard-feasible target shift. Static eligibility
+    # checks skill/department/capacity/availability/leave, matching the assignment rules.
+    from .constraints import employee_can_work_shift
+    eligible_nights = [employee for employee in active if any(employee_can_work_shift(employee, shift, data) for shift in night_shifts)]
+    eligible_weekends = [employee for employee in active if any(employee_can_work_shift(employee, shift, data) for shift in weekend_shifts)]
+    night_expr = shift_count_expr(eligible_nights, night_shifts, "night")
+    weekend_expr = shift_count_expr(eligible_weekends, weekend_shifts, "weekend")
+    return hour_expr, night_expr, weekend_expr
+
+
+def fairness_metrics(assignments: list[dict[str, Any]], data: SchedulingInput) -> dict[str, Any]:
+    """Calculate interpretable workload, night, and weekend balance metrics.
+
+    Hour target is total assigned hours divided by active employees. Night and
+    weekend ranges use employees eligible for at least one shift in that category.
+    Balance scores are 1 / (1 + relative range/deviation), hence 1 is perfect.
+    """
+    active = [employee for employee in data.employees if employee.active]
+    total_minutes = {employee.id: 0 for employee in data.employees}
+    nights = {employee.id: 0 for employee in data.employees}
+    weekends = {employee.id: 0 for employee in data.employees}
+    shifts = {shift.id: shift for shift in data.shifts}
+    for assignment in assignments:
+        shift = shifts[assignment["shift_id"]]
+        employee_id = assignment["employee_id"]
+        total_minutes[employee_id] += shift.duration_minutes
+        if shift.starts_at.hour >= 20 or shift.ends_at.hour <= 6 or shift.ends_at.date() > shift.starts_at.date():
+            nights[employee_id] += 1
+        if shift.date.weekday() >= 5:
+            weekends[employee_id] += 1
+    target_minutes = sum(total_minutes[item.id] for item in active) / len(active) if active else 0
+    deviations = {item.id: round(abs(total_minutes[item.id] - target_minutes) / 60, 2) for item in active}
+    total_deviation = round(sum(deviations.values()), 2)
+    from .constraints import employee_can_work_shift
+    night_shifts = [shift for shift in data.shifts if shift.starts_at.hour >= 20 or shift.ends_at.hour <= 6 or shift.ends_at.date() > shift.starts_at.date()]
+    weekend_shifts = [shift for shift in data.shifts if shift.date.weekday() >= 5]
+    eligible_nights = [item.id for item in active if any(employee_can_work_shift(item, shift, data) for shift in night_shifts)]
+    eligible_weekends = [item.id for item in active if any(employee_can_work_shift(item, shift, data) for shift in weekend_shifts)]
+    night_range = max((nights[item] for item in eligible_nights), default=0) - min((nights[item] for item in eligible_nights), default=0)
+    weekend_range = max((weekends[item] for item in eligible_weekends), default=0) - min((weekends[item] for item in eligible_weekends), default=0)
+    target_hours = round(target_minutes / 60, 2)
+    total_active_hours = sum(total_minutes[item.id] for item in active) / 60
+    night_total = sum(nights[item] for item in eligible_nights)
+    weekend_total = sum(weekends[item] for item in eligible_weekends)
+    return {
+        "target_hours": target_hours,
+        "hour_deviations": deviations,
+        "total_hour_deviation": total_deviation,
+        "night_shift_counts": nights,
+        "night_shift_range": night_range,
+        "weekend_shift_counts": weekends,
+        "weekend_shift_range": weekend_range,
+        "hour_balance_score": round(1 / (1 + total_deviation / max(total_active_hours, 1)), 4),
+        "night_shift_balance_score": round(1 / (1 + night_range / max(night_total, 1)), 4),
+        "weekend_balance_score": round(1 / (1 + weekend_range / max(weekend_total, 1)), 4),
+    }
 
 
 def preference_metrics(assignments: list[dict[str, Any]], data: SchedulingInput) -> dict[str, Any]:
