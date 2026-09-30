@@ -60,6 +60,7 @@ def test_database_schedule_generation_persists_and_retrieves_assignments(client)
     assert response.status_code == 200, response.text
     result = response.json()
     assert result["status"] == "FEASIBLE"
+    assert result["conflicts"] == []
     assert result["solver_status"] in {"FEASIBLE", "OPTIMAL"}
     assert result["schedule_id"] is not None
     assert result["total_required_staff"] == result["total_assigned_staff"] == 4
@@ -108,6 +109,9 @@ def test_infeasible_result_is_not_persisted(client):
     assert response.status_code == 200
     result = response.json()
     assert result["status"] == "INFEASIBLE"
+    assert result["conflicts"]
+    assert "STAFFING_SHORTAGE" in {item["type"] for item in result["conflicts"]}
+    assert all(item["conflict_id"] and item["severity"] for item in result["conflicts"])
     assert result["schedule_id"] is None
     assert result["assignments"] == []
     assert len(client.get("/api/schedules").json()) == before

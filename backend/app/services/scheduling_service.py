@@ -17,6 +17,7 @@ from app.optimizer.model import (
     normalize_preference_weight, scheduling_input_from_mapping,
 )
 from app.optimizer.solver import solve_schedule
+from app.services.conflict_detection_service import detect_conflicts
 
 
 class SchedulingDataError(ValueError):
@@ -28,6 +29,7 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
     if isinstance(input_data, Mapping):
         input_data = scheduling_input_from_mapping(input_data)
     result = solve_schedule(input_data)
+    conflicts = detect_conflicts(input_data) if result.status == "INFEASIBLE" else []
     return {
         "status": result.status, "solver_status": result.solver_status,
         "assignments": result.assignments, "unassigned_shifts": result.unassigned_shifts,
@@ -40,6 +42,7 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
         "objective": result.objective, "preference": result.preference,
         "fairness": result.fairness,
         "projects": result.projects,
+        "conflicts": conflicts,
     }
 
 
@@ -195,6 +198,7 @@ def generate_schedule_from_database(
     """Run CP-SAT and persist a complete successful result in one transaction."""
     data, employees_by_id, shifts_by_id = prepare_scheduling_input(db, start_date, end_date, department_id, project_id)
     result = solve_schedule(data)
+    conflicts = detect_conflicts(data) if result.status == "INFEASIBLE" else []
     total_required = sum(item.required_staff for item in data.shifts)
     response: dict[str, Any] = {
         "status": result.status, "solver_status": result.solver_status,
@@ -209,6 +213,7 @@ def generate_schedule_from_database(
         "preference": result.preference,
         "fairness": result.fairness,
         "projects": result.projects,
+        "conflicts": conflicts,
         "assignments": [],
         "unassigned_shifts": result.unassigned_shifts,
         "employee_hours": result.employee_hours,
