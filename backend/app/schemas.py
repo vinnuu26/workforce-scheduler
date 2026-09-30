@@ -25,3 +25,6 @@ class OptimizationRequest(APIModel):
         if self.end_date < self.start_date:
             raise ValueError("end_date must be on or after start_date")
         return self
+
+class AlternativeOptimizationRequest(OptimizationRequest):
+    count:int=Field(default=3,ge=1,le=5)

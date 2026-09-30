@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Iterable
 
 from ortools.sat.python import cp_model
 
 from .constraints import add_hard_constraints
-from .model import SchedulingInput, create_decision_variables
+from .model import Identifier, SchedulingInput, create_decision_variables
 from .objectives import (
     excess_staff_expression, fairness_expressions, fairness_metrics, labor_cost_expression, preference_metrics,
     preference_score_expression,
@@ -65,10 +65,22 @@ def _empty_infeasible_result(data: SchedulingInput, solver_status: str) -> Optim
     )
 
 
-def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> OptimizationResult:
+def solve_schedule(
+    data: SchedulingInput,
+    max_time_seconds: float = 30.0,
+    excluded_signatures: Iterable[frozenset[tuple[Identifier, Identifier]]] = (),
+) -> OptimizationResult:
     decisions = create_decision_variables(data)
     add_hard_constraints(decisions.model, decisions.assignments, data)
     add_project_requirement_constraints(decisions.model, decisions.assignments, data)
+    # A no-good constraint requires at least one employee/shift BoolVar to differ
+    # from every prior signature while leaving all hard constraints unchanged.
+    for signature in excluded_signatures:
+        decisions.model.add(
+            sum(1 - variable for pair, variable in decisions.assignments.items() if pair in signature)
+            + sum(variable for pair, variable in decisions.assignments.items() if pair not in signature)
+            >= 1
+        )
     excess_expr = excess_staff_expression(decisions.assignments, data)
     cost_expr = labor_cost_expression(decisions.assignments, data)
     preference_expr = preference_score_expression(decisions.assignments, data)
