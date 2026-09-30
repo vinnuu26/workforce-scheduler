@@ -12,7 +12,7 @@ router = APIRouter(prefix="/optimization", tags=["optimization"])
 def generate(payload: OptimizationRequest, db: Session = Depends(get_db)):
     try:
         return generate_schedule_from_database(
-            db, payload.start_date, payload.end_date, payload.department_id,
+            db, payload.start_date, payload.end_date, payload.department_id, payload.project_id,
         )
     except SchedulingDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

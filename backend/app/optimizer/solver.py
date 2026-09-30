@@ -13,6 +13,7 @@ from .objectives import (
     excess_staff_expression, fairness_expressions, fairness_metrics, labor_cost_expression, preference_metrics,
     preference_score_expression,
 )
+from .projects import add_project_requirement_constraints, project_metrics
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +32,7 @@ class OptimizationResult:
     objective: dict[str, int | float]
     preference: dict[str, Any]
     fairness: dict[str, Any]
+    projects: list[dict[str, Any]]
 
 
 def _time_text(value: datetime) -> str:
@@ -59,12 +61,14 @@ def _empty_infeasible_result(data: SchedulingInput, solver_status: str) -> Optim
         preference={"total_weight": 0.0, "satisfied_weight": 0.0,
                     "satisfaction_percentage": 0.0, "violated_preferences": []},
         fairness=fairness_metrics([], data),
+        projects=project_metrics([], data),
     )
 
 
 def solve_schedule(data: SchedulingInput, max_time_seconds: float = 30.0) -> OptimizationResult:
     decisions = create_decision_variables(data)
     add_hard_constraints(decisions.model, decisions.assignments, data)
+    add_project_requirement_constraints(decisions.model, decisions.assignments, data)
     excess_expr = excess_staff_expression(decisions.assignments, data)
     cost_expr = labor_cost_expression(decisions.assignments, data)
     preference_expr = preference_score_expression(decisions.assignments, data)
@@ -150,6 +154,7 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
         assignments.append({
             "employee_id": employee_id, "employee_name": employee.name,
             "shift_id": shift_id, "shift_date": shift.date.isoformat(), "shift_name": shift.name,
+            "project_id": shift.project_id,
             "start_time": _time_text(shift.starts_at), "end_time": _time_text(shift.ends_at),
             "department": shift.department, "hours": hours, "regular_hours": hours,
             "overtime_hours": 0.0, "hourly_rate": rate, "cost": cost,
@@ -166,6 +171,7 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
     total_cost = round(sum(assignment["cost"] for assignment in assignments), 2)
     preference = preference_metrics(assignments, data)
     fairness = fairness_metrics(assignments, data)
+    projects = project_metrics(assignments, data)
     preference_score = round(
         preference["satisfied_weight"]
         - sum(item["weight"] for item in preference["violated_preferences"]), 2,
@@ -178,5 +184,5 @@ def _extract_result(data: SchedulingInput, assignments_by_pair: dict, solver: cp
         total_cost=total_cost,
         objective={"excess_staff": total_excess, "labor_cost": total_cost,
                    "preference_score": preference_score},
-        preference=preference, fairness=fairness,
+        preference=preference, fairness=fairness, projects=projects,
     )

@@ -26,3 +26,31 @@ where `r` is relative imbalance: total hour deviation divided by total assigned
 hours, or the category's count range divided by its assigned shift count. A
 zero-work denominator uses 1 so a schedule with no shifts has no measured
 imbalance. A score of 1 means zero measured imbalance.
+
+# Project-aware scheduling
+
+Project-aware scheduling adds hard constraints for requirements on projects
+whose status is `active`. Shifts must have `project_id` set to be considered
+project work. A requirement uses its existing `quantity` as the distinct
+qualified employee count, plus `required_hours`; `skill_id` identifies the
+required skill and `minimum_proficiency` sets its threshold. Qualified assigned
+time across associated shifts must satisfy both values. Requirements without a
+skill apply to any active employee assigned to that project's work.
+
+The shift must be completed on or before the project's deadline: a shift counts
+only when its end calendar date is no later than the deadline date. Thus an
+overnight shift ending the following day does not count for the previous day's
+deadline. Work after a deadline never satisfies a requirement. Explicit unmet
+requirements make the model infeasible and no schedule or assignment rows are
+persisted. Project completion metrics are returned under `projects` alongside
+the existing optimizer fields.
+
+The schema change is additive in
+`migrations/0002_project_aware_scheduling.sql`. `Base.metadata.create_all`
+creates the new columns for a fresh database but does not alter an existing
+SQLite database; apply the migration to an existing database before using the
+new fields. Existing employee skill rows have no proficiency column, so
+database-loaded employee skills currently use proficiency level 1. Higher
+employee proficiency levels are supported by the database-independent
+optimizer input but need a later employee-skill schema/API extension for
+persisted workforce data.

@@ -6,12 +6,13 @@ from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app import models
 from app.optimizer.model import (
     AvailabilityWindow, Employee as OptimizerEmployee, EmployeePreference as OptimizerPreference, LeavePeriod,
+    Project as OptimizerProject, ProjectRequirement as OptimizerProjectRequirement,
     RequiredSkill, SchedulingInput, Shift as OptimizerShift, SkillProficiency,
     normalize_preference_weight, scheduling_input_from_mapping,
 )
@@ -38,29 +39,38 @@ def generate_schedule(input_data: SchedulingInput | Mapping[str, Any]) -> dict[s
         "total_overtime_hours": result.total_overtime_hours, "total_cost": result.total_cost,
         "objective": result.objective, "preference": result.preference,
         "fairness": result.fairness,
+        "projects": result.projects,
     }
 
 
 def prepare_scheduling_input(
     db: Session, start_date: date, end_date: date, department_id: int | None = None,
+    project_id: int | None = None,
 ) -> tuple[SchedulingInput, dict[int, models.Employee], dict[int, models.Shift]]:
     """Load and validate database rows, then convert them to optimizer value objects."""
     employees = list(db.scalars(
         select(models.Employee).options(joinedload(models.Employee.department), selectinload(models.Employee.skills))
         .order_by(models.Employee.id)
     ).unique())
-    shifts = list(db.scalars(
+    shifts_query = (
         select(models.Shift).options(
             joinedload(models.Shift.department), joinedload(models.Shift.template),
             selectinload(models.Shift.required_skills),
         ).where(models.Shift.date >= start_date, models.Shift.date <= end_date)
         .order_by(models.Shift.date, models.Shift.id)
-    ).unique())
+    )
+    if project_id is not None:
+        if db.get(models.Project, project_id) is None:
+            raise SchedulingDataError(f"project_id {project_id} does not reference an existing project")
+        shifts_query = shifts_query.where(models.Shift.project_id == project_id)
+    shifts = list(db.scalars(shifts_query).unique())
     if department_id is not None:
         if db.get(models.Department, department_id) is None:
             raise SchedulingDataError(f"department_id {department_id} does not reference an existing department")
         employees = [employee for employee in employees if employee.department_id == department_id]
         shifts = [shift for shift in shifts if shift.department_id == department_id]
+    if project_id is not None:
+        shifts = [shift for shift in shifts if shift.project_id == project_id]
     if not employees:
         raise SchedulingDataError("No employees are available for the requested scheduling period")
     if not shifts:
@@ -146,21 +156,44 @@ def prepare_scheduling_input(
         department=item.department.name if item.department else None,
         required_staff=item.required_staff,
         required_skills=tuple(RequiredSkill(skill.name) for skill in item.required_skills),
+        project_id=item.project_id,
     ) for item in shifts)
     optimizer_preferences = tuple(OptimizerPreference(
         employee_id=item.employee_id, key=item.key, value=item.value,
         weight=normalize_preference_weight(item.weight),
     ) for item in preference_rows)
+    if project_id is not None:
+        project_rows = list(db.scalars(
+            select(models.Project).options(selectinload(models.Project.requirements).joinedload(models.ProjectRequirement.skill))
+            .where(models.Project.id == project_id, func.lower(models.Project.status) == "active")
+            .order_by(models.Project.id)
+        ).unique())
+    else:
+        project_rows = list(db.scalars(
+            select(models.Project).options(selectinload(models.Project.requirements).joinedload(models.ProjectRequirement.skill))
+            .where(func.lower(models.Project.status) == "active")
+            .order_by(models.Project.id)
+        ).unique())
+    optimizer_projects = tuple(OptimizerProject(
+        id=item.id, name=item.name, deadline=item.deadline, status=item.status,
+    ) for item in project_rows)
+    optimizer_project_requirements = tuple(OptimizerProjectRequirement(
+        id=requirement.id, project_id=requirement.project_id,
+        skill_name=requirement.skill.name if requirement.skill else None, role=requirement.role,
+        required_count=requirement.quantity, required_hours=float(requirement.required_hours or 0),
+        deadline=item.deadline, minimum_proficiency=requirement.minimum_proficiency or 1,
+    ) for item in project_rows for requirement in item.requirements)
     return SchedulingInput(optimizer_employees, optimizer_shifts, tuple(availability), tuple(
         LeavePeriod(item.employee_id, item.start_date, item.end_date, item.status) for item in leave_rows
-    ), optimizer_preferences), {item.id: item for item in employees}, {item.id: item for item in shifts}
+    ), optimizer_preferences, optimizer_projects, optimizer_project_requirements), {item.id: item for item in employees}, {item.id: item for item in shifts}
 
 
 def generate_schedule_from_database(
     db: Session, start_date: date, end_date: date, department_id: int | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
     """Run CP-SAT and persist a complete successful result in one transaction."""
-    data, employees_by_id, shifts_by_id = prepare_scheduling_input(db, start_date, end_date, department_id)
+    data, employees_by_id, shifts_by_id = prepare_scheduling_input(db, start_date, end_date, department_id, project_id)
     result = solve_schedule(data)
     total_required = sum(item.required_staff for item in data.shifts)
     response: dict[str, Any] = {
@@ -175,6 +208,7 @@ def generate_schedule_from_database(
         "objective": result.objective,
         "preference": result.preference,
         "fairness": result.fairness,
+        "projects": result.projects,
         "assignments": [],
         "unassigned_shifts": result.unassigned_shifts,
         "employee_hours": result.employee_hours,

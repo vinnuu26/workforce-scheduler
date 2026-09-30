@@ -20,7 +20,7 @@ class ShiftTemplate(Base):
     id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(120)); start_time: Mapped[time]=mapped_column(Time); end_time: Mapped[time]=mapped_column(Time); description: Mapped[str|None]=mapped_column(Text, default=None)
 class Shift(Base):
     __tablename__="shifts"
-    id: Mapped[int]=mapped_column(primary_key=True); date: Mapped[date]=mapped_column(Date, index=True); department_id: Mapped[int|None]=mapped_column(ForeignKey("departments.id"), default=None); template_id: Mapped[int|None]=mapped_column(ForeignKey("shift_templates.id"), default=None); start_time: Mapped[time|None]=mapped_column(Time, default=None); end_time: Mapped[time|None]=mapped_column(Time, default=None); required_staff: Mapped[int]=mapped_column(Integer, default=1)
+    id: Mapped[int]=mapped_column(primary_key=True); date: Mapped[date]=mapped_column(Date, index=True); department_id: Mapped[int|None]=mapped_column(ForeignKey("departments.id"), default=None); template_id: Mapped[int|None]=mapped_column(ForeignKey("shift_templates.id"), default=None); project_id: Mapped[int|None]=mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), default=None, index=True); start_time: Mapped[time|None]=mapped_column(Time, default=None); end_time: Mapped[time|None]=mapped_column(Time, default=None); required_staff: Mapped[int]=mapped_column(Integer, default=1)
     department=relationship(Department); template=relationship(ShiftTemplate); required_skills=relationship(Skill, secondary=shift_skills)
 class Availability(Base):
     __tablename__="availability"
@@ -33,10 +33,12 @@ class EmployeePreference(Base):
     id: Mapped[int]=mapped_column(primary_key=True); employee_id: Mapped[int]=mapped_column(ForeignKey("employees.id")); key: Mapped[str]=mapped_column(String(100)); value: Mapped[str]=mapped_column(String(255)); weight: Mapped[float|None]=mapped_column(Float, nullable=True, default=1.0, server_default="1.0"); notes: Mapped[str|None]=mapped_column(Text, default=None)
 class Project(Base):
     __tablename__="projects"
-    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); status: Mapped[str]=mapped_column(String(40), default="planned"); description: Mapped[str|None]=mapped_column(Text, default=None)
+    id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); status: Mapped[str]=mapped_column(String(40), default="planned"); description: Mapped[str|None]=mapped_column(Text, default=None); deadline: Mapped[date|None]=mapped_column(Date, default=None)
+    requirements=relationship("ProjectRequirement", cascade="all, delete-orphan")
 class ProjectRequirement(Base):
     __tablename__="project_requirements"
-    id: Mapped[int]=mapped_column(primary_key=True); project_id: Mapped[int]=mapped_column(ForeignKey("projects.id", ondelete="CASCADE")); skill_id: Mapped[int|None]=mapped_column(ForeignKey("skills.id"), default=None); role: Mapped[str]=mapped_column(String(120), default="staff"); quantity: Mapped[int]=mapped_column(Integer, default=1)
+    id: Mapped[int]=mapped_column(primary_key=True); project_id: Mapped[int]=mapped_column(ForeignKey("projects.id", ondelete="CASCADE")); skill_id: Mapped[int|None]=mapped_column(ForeignKey("skills.id"), default=None); role: Mapped[str]=mapped_column(String(120), default="staff"); quantity: Mapped[int]=mapped_column(Integer, default=1); required_hours: Mapped[float]=mapped_column(Float, default=0.0, server_default="0"); minimum_proficiency: Mapped[int]=mapped_column(Integer, default=1, server_default="1")
+    skill=relationship(Skill)
 class Schedule(Base):
     __tablename__="schedules"
     id: Mapped[int]=mapped_column(primary_key=True); name: Mapped[str]=mapped_column(String(160)); start_date: Mapped[date|None]=mapped_column(Date, default=None); end_date: Mapped[date|None]=mapped_column(Date, default=None); status: Mapped[str]=mapped_column(String(40), default="draft"); objective_value: Mapped[float|None]=mapped_column(default=None); total_cost: Mapped[float]=mapped_column(default=0.0); overtime_hours: Mapped[float]=mapped_column(default=0.0); created_at: Mapped[datetime]=mapped_column(DateTime, default=lambda: datetime.now(UTC))

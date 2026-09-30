@@ -43,6 +43,25 @@ class EmployeePreference:
     weight: float = 1.0
 
 @dataclass(frozen=True, slots=True)
+class Project:
+    id: Identifier
+    name: str
+    deadline: date | None = None
+    status: str = "planned"
+    priority: int | None = None
+
+@dataclass(frozen=True, slots=True)
+class ProjectRequirement:
+    id: Identifier
+    project_id: Identifier
+    skill_name: str | None = None
+    role: str = "staff"
+    required_count: int = 1
+    required_hours: float = 0.0
+    deadline: date | None = None
+    minimum_proficiency: int = 1
+
+@dataclass(frozen=True, slots=True)
 class Employee:
     id: Identifier
     name: str
@@ -64,6 +83,7 @@ class Shift:
     required_skills: tuple[RequiredSkill, ...] = ()
     allow_cross_department: bool = False
     minimum_rest_hours: float = 0.0
+    project_id: Identifier | None = None
 
     @property
     def starts_at(self) -> datetime:
@@ -89,6 +109,8 @@ class SchedulingInput:
     availability: tuple[AvailabilityWindow, ...] = ()
     leave: tuple[LeavePeriod, ...] = ()
     preferences: tuple[EmployeePreference, ...] = ()
+    projects: tuple[Project, ...] = ()
+    project_requirements: tuple[ProjectRequirement, ...] = ()
 
 @dataclass(frozen=True, slots=True)
 class DecisionVariables:
@@ -168,6 +190,7 @@ def scheduling_input_from_mapping(raw: Mapping[str, Any]) -> SchedulingInput:
         department=item.get("department", item.get("department_id")), required_skills=_required_skills(item.get("required_skills")),
         allow_cross_department=bool(item.get("allow_cross_department", item.get("cross_department_allowed", False))),
         minimum_rest_hours=float(item.get("minimum_rest_hours", item.get("min_rest_hours", 0))),
+        project_id=item.get("project_id"),
     ) for item in raw.get("shifts", ()))
     availability=tuple(AvailabilityWindow(
         employee_id=item.get("employee_id"),
@@ -183,8 +206,22 @@ def scheduling_input_from_mapping(raw: Mapping[str, Any]) -> SchedulingInput:
         employee_id=item["employee_id"], key=str(item.get("key", "")),
         value=str(item.get("value", "")), weight=normalize_preference_weight(item.get("weight", 1.0)),
     ) for item in raw.get("preferences", ()))
+    projects=tuple(Project(
+        id=item.get("id", item.get("project_id")), name=str(item.get("name", "")),
+        deadline=_as_date(item["deadline"]) if item.get("deadline") else None,
+        status=str(item.get("status", "planned")), priority=item.get("priority"),
+    ) for item in raw.get("projects", ()))
+    project_requirements=tuple(ProjectRequirement(
+        id=item.get("id", index), project_id=item.get("project_id"),
+        skill_name=item.get("skill_name", item.get("skill")), role=str(item.get("role", "staff")),
+        required_count=int(item.get("required_count", item.get("quantity", 1))),
+        required_hours=float(item.get("required_hours", 0)),
+        deadline=_as_date(item["deadline"]) if item.get("deadline") else None,
+        minimum_proficiency=int(item.get("minimum_proficiency", 1)),
+    ) for index, item in enumerate(raw.get("project_requirements", ())))
     return SchedulingInput(employees=employees, shifts=shifts, availability=availability,
-                           leave=leave, preferences=preferences)
+                           leave=leave, preferences=preferences, projects=projects,
+                           project_requirements=project_requirements)
 
 def create_decision_variables(data: SchedulingInput) -> DecisionVariables:
     """Create exactly one BoolVar for each unique employee/shift pair."""
