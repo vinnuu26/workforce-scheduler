@@ -11,7 +11,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -70,6 +70,13 @@ def main() -> None:
                     row.skills = [skills[qualifications[0]], skills[qualifications[qualification_index]]]
                     db.add(row); db.flush()
                 employees[(department, index)] = row
+                # Update levels every run so seeded proficiency data stays demonstrative and idempotent.
+                for skill in row.skills:
+                    level = 1 + ((index + skill.id) % 5)
+                    db.execute(update(models.employee_skills).where(
+                        models.employee_skills.c.employee_id == row.id,
+                        models.employee_skills.c.skill_id == skill.id,
+                    ).values(proficiency=level))
 
         project_specs = (("Regional Fulfilment Demo", "active"), ("Dispatch Coverage Demo", "planned"), ("Service Desk Demo", "active"))
         projects = {}

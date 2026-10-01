@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.orm import object_session
 from ..database import get_db
 from ..services.crud import get_item,create_item,update_item,delete_item
 def data(obj):
@@ -7,6 +9,13 @@ def data(obj):
     for rel in obj.__mapper__.relationships:
         value=getattr(obj,rel.key)
         result[rel.key]=[data(x) for x in value] if rel.uselist else (data(value) if value is not None else None)
+    from ..models import Employee, employee_skills
+    if isinstance(obj, Employee):
+        session = object_session(obj)
+        if session is not None:
+            levels = dict(session.execute(select(employee_skills.c.skill_id, employee_skills.c.proficiency).where(employee_skills.c.employee_id == obj.id)).all())
+            for skill in result.get("skills", []):
+                skill["proficiency"] = int(levels.get(skill["id"], 1))
     return result
 def crud_router(model, create_schema, path):
     router=APIRouter(prefix=path,tags=[path.strip('/')])

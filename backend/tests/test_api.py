@@ -57,11 +57,11 @@ def test_schedule_assignments_conflicts_explanations(client):
     shift=client.post("/api/shifts",json={"date":"2026-10-01","required_staff":1}).json()
     schedule=client.post("/api/schedules",json={"name":"October","start_date":"2026-10-01","end_date":"2026-10-31"}); assert schedule.status_code==201; sid=schedule.json()["id"]
     assert client.get(f"/api/schedules/{sid}").status_code==200
-    assignment=client.post(f"/api/schedules/{sid}/assignments",json={"employee_id":employee["id"],"shift_id":shift["id"]}); assert assignment.status_code==201; aid=assignment.json()["id"]
-    assert client.get(f"/api/schedules/{sid}/assignments").json()[0]["id"]==aid
+    # Saved assignments are optimizer-owned; arbitrary manual writes could bypass hard constraints.
+    assignment=client.post(f"/api/schedules/{sid}/assignments",json={"employee_id":employee["id"],"shift_id":shift["id"]}); assert assignment.status_code==405
+    assert client.get(f"/api/schedules/{sid}/assignments").json()==[]
     assert client.get(f"/api/schedules/{sid}/conflicts").json()==[]
     assert client.get(f"/api/schedules/{sid}/explanations").json()==[]
-    assert client.delete(f"/api/schedules/{sid}/assignments/{aid}").status_code==204
     assert client.delete(f"/api/schedules/{sid}").status_code==204
 
 def test_missing_resources_and_reference_validation(client):

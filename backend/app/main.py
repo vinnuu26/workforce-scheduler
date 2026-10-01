@@ -3,12 +3,22 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine
+from sqlalchemy import inspect, text
 from . import models  # register models
 from .api import departments, skills, employees, shifts, shift_templates, availability, leave, preferences, projects, schedules, relations, optimization
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    migrations = (
+        ("employee_skills", "proficiency", "ALTER TABLE employee_skills ADD COLUMN proficiency INTEGER NOT NULL DEFAULT 1"),
+        ("schedules", "scope_department_id", "ALTER TABLE schedules ADD COLUMN scope_department_id INTEGER"),
+        ("schedules", "scope_project_id", "ALTER TABLE schedules ADD COLUMN scope_project_id INTEGER"),
+    )
+    for table, column, statement in migrations:
+        if inspect(engine).has_table(table) and column not in {item["name"] for item in inspect(engine).get_columns(table)}:
+            with engine.begin() as connection:
+                connection.execute(text(statement))
     yield
 
 app=FastAPI(title="Workforce Scheduler API",version="1.0.0",lifespan=lifespan)

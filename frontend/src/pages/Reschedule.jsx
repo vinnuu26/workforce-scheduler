@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { RefreshCw, WandSparkles } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Badge, Button, Card, EmptyState, LoadingState, PageHeader, Select } from '../components/UI'
-import { getApiErrorMessage, getSchedules, previewReschedule, schedulesApi } from '../services/api'
+import { applyReschedule, getApiErrorMessage, getSchedules, previewReschedule, schedulesApi } from '../services/api'
 
 const dateLabel = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
 
@@ -15,6 +15,7 @@ export default function Reschedule() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
 
   const loadSchedules = useCallback(async () => {
     setLoading(true)
@@ -53,6 +54,18 @@ export default function Reschedule() {
     try { setPreview((await previewReschedule({ schedule_id: Number(scheduleId), assignment_id: selectedAssignment.id })).data) }
     catch (e) { setError(getApiErrorMessage(e)) } finally { setBusy(false) }
   }
+  const applyPreview = async () => {
+    if (!preview || preview.status !== 'FEASIBLE' || !selectedAssignment) return
+    if (!window.confirm('Apply this optimizer-verified replacement to the saved schedule? This replaces its assignments atomically.')) return
+    setBusy(true); setError(''); setSuccess('')
+    try {
+      await applyReschedule({ schedule_id: Number(scheduleId), assignment_id: selectedAssignment.id, confirmed: true })
+      setSuccess('The validated schedule replacement was applied.')
+      const response = await schedulesApi.getAssignments(scheduleId)
+      setAssignments(Array.isArray(response.data) ? response.data : [])
+      await loadSchedules()
+    } catch (e) { setError(getApiErrorMessage(e)) } finally { setBusy(false) }
+  }
 
   return <>
     <PageHeader eyebrow="Schedule changes · Live optimizer" title="Reschedule preview" description="Test a full-day absence against a saved schedule and compare a feasible optimizer result without changing stored data." action={<Button variant="outline" icon={RefreshCw} onClick={loadSchedules}>Refresh schedules</Button>}/>
@@ -68,7 +81,7 @@ export default function Reschedule() {
         </>}
       </div></Card>
       <div className="space-y-4 xl:col-span-3">
-        {error && <Card className="p-4"><p role="alert" className="text-sm text-rose-700">{error}</p></Card>}
+        {error && <Card className="p-4"><p role="alert" className="text-sm text-rose-700">{error}</p></Card>}{success && <Card className="p-4"><p role="status" className="text-sm text-emerald-700">{success}</p></Card>}
         {busy && scheduleId && <Card><LoadingState label="Running the existing schedule optimizer…"/></Card>}
         {preview && <>
           <Card><div className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-ink">Reschedule comparison</h2><p className="mt-1 text-xs text-muted">Original schedule #{preview.source_schedule_id} · {dateLabel(preview.absence_date)}</p></div><Badge tone={preview.status === 'FEASIBLE' ? 'green' : 'rose'} dot>{preview.status}</Badge></div>
@@ -78,7 +91,7 @@ export default function Reschedule() {
             <Card><div className="border-b border-line p-5"><h2 className="text-sm font-semibold text-ink">Assignment differences</h2><p className="mt-1 text-xs text-muted">All returned differences are computed against the stored assignments.</p></div>
               {changed.length ? <div className="divide-y divide-line">{changed.map(({ shiftId, before, after }) => <div key={shiftId} className="flex flex-wrap items-center gap-3 p-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-ink">{after?.shift_name || before?.shift_name || `Shift #${shiftId}`}</p><p className="text-xs text-muted">{dateLabel(after?.shift_date || before?.shift_date)}</p></div><div className="text-right text-xs"><p className="text-muted">{before?.employee_name || 'Unassigned'} <span aria-hidden="true">→</span></p><p className="font-semibold text-ink">{after?.employee_name || 'Unassigned'}</p></div><Badge tone="blue">Changed</Badge></div>)}</div> : <div className="p-5"><EmptyState title="No assignment changes" description="The feasible candidate has the same employee assignments as the saved schedule."/></div>}
             </Card>
-            <Card className="p-4"><p className="text-sm font-semibold text-ink">Applying changes is not available</p><p className="mt-1 text-xs text-muted">The backend has no atomic validated schedule replacement endpoint. This page keeps the original unchanged and only previews the optimizer output.</p></Card>
+            <Card className="p-4"><p className="text-sm font-semibold text-ink">Apply reviewed schedule</p><p className="mt-1 text-xs text-muted">The server reruns the optimizer candidate and atomically replaces assignments only when it remains feasible.</p><div className="mt-3 flex gap-2"><Button variant="outline" disabled={busy} onClick={() => { setPreview(null); setSuccess('') }}>Cancel review</Button><Button disabled={busy} onClick={applyPreview}>{busy ? 'Validating and applying…' : 'Confirm and apply'}</Button></div></Card>
           </>}
         </>}
         {!preview && !loading && !busy && !error && <Card><EmptyState title="No preview yet" description="Select a saved schedule and an assignment, then run the optimizer-backed absence preview."/></Card>}

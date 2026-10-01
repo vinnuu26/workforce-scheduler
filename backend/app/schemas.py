@@ -11,7 +11,7 @@ class AvailabilityCreate(APIModel): employee_id:int; date:date; start_time:time|
 class LeaveCreate(APIModel): employee_id:int; start_date:date; end_date:date; status:str="pending"; reason:str|None=None
 class PreferenceCreate(APIModel): employee_id:int; key:str; value:str; weight:float|None=1.0; notes:str|None=None
 class ProjectCreate(APIModel): name:str; status:str="planned"; description:str|None=None; deadline:date|None=None
-class RequirementCreate(APIModel): skill_id:int|None=None; role:str="staff"; quantity:int=Field(default=1,ge=1); required_hours:float=Field(default=0.0,ge=0); minimum_proficiency:int=Field(default=1,ge=1)
+class RequirementCreate(APIModel): skill_id:int|None=None; role:str="staff"; quantity:int=Field(default=1,ge=1); required_hours:float=Field(default=0.0,ge=0); minimum_proficiency:int=Field(default=1,ge=1,le=5)
 class ScheduleCreate(APIModel): name:str; start_date:date|None=None; end_date:date|None=None; status:str="draft"
 class AssignmentCreate(APIModel): employee_id:int; shift_id:int; notes:str|None=None
 class OptimizationRequest(APIModel):
@@ -32,3 +32,13 @@ class AlternativeOptimizationRequest(OptimizationRequest):
 class ReschedulePreviewRequest(APIModel):
     schedule_id: int = Field(ge=1)
     assignment_id: int = Field(ge=1)
+
+class RescheduleApplyRequest(ReschedulePreviewRequest):
+    confirmed: bool
+
+class EmployeeSkillRequest(APIModel):
+    skill_id: int = Field(ge=1)
+    proficiency: int = Field(default=1, ge=1, le=5)
+
+class RequirementUpdate(APIModel):
+    skill_id:int|None=None; role:str|None=None; quantity:int|None=Field(default=None,ge=1); required_hours:float|None=Field(default=None,ge=0); minimum_proficiency:int|None=Field(default=None,ge=1,le=5)

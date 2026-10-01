@@ -164,7 +164,7 @@ def prepare_scheduling_input(
         active=item.active,
         hourly_rate=float(item.hourly_rate),
         max_hours_per_week=float(item.max_hours_per_week),
-        skills=tuple(SkillProficiency(skill.name) for skill in item.skills),
+        skills=tuple(SkillProficiency(skill.name, int(db.execute(select(models.employee_skills.c.proficiency).where(models.employee_skills.c.employee_id == item.id, models.employee_skills.c.skill_id == skill.id)).scalar_one_or_none() or 1)) for skill in item.skills),
     ) for item in employees)
     optimizer_shifts = tuple(OptimizerShift(
         id=item.id, date=item.date,
@@ -244,7 +244,8 @@ def generate_schedule_from_database(
             name=f"Generated schedule {start_date.isoformat()} to {end_date.isoformat()}",
             start_date=start_date, end_date=end_date, status="generated",
             objective_value=None, total_cost=result.total_cost,
-            overtime_hours=result.total_overtime_hours,
+            overtime_hours=result.total_overtime_hours, scope_department_id=department_id,
+            scope_project_id=project_id,
         )
         db.add(schedule)
         db.flush()
@@ -309,7 +310,9 @@ def preview_reschedule_from_database(db: Session, schedule_id: int, assignment_i
     if shift is None or shift.date < schedule.start_date or shift.date > schedule.end_date:
         raise SchedulingDataError("The selected assignment shift is outside the saved schedule period")
 
-    data, _employees, _shifts = prepare_scheduling_input(db, schedule.start_date, schedule.end_date)
+    data, _employees, _shifts = prepare_scheduling_input(
+        db, schedule.start_date, schedule.end_date, schedule.scope_department_id, schedule.scope_project_id,
+    )
     candidate = replace(data, leave=(*data.leave, LeavePeriod(
         employee_id=assignment.employee_id, start_date=shift.date, end_date=shift.date, status="approved",
     )))
@@ -333,3 +336,37 @@ def preview_reschedule_from_database(db: Session, schedule_id: int, assignment_i
         "projects": result.projects,
         "conflicts": detect_conflicts(candidate) if result.status == "INFEASIBLE" else [],
     }
+
+
+def apply_reschedule_from_database(db: Session, schedule_id: int, assignment_id: int, confirmed: bool) -> dict[str, Any]:
+    """Revalidate a temporary absence candidate, then atomically replace schedule rows."""
+    if not confirmed:
+        raise SchedulingDataError("Explicit confirmation is required to apply a reschedule")
+    try:
+        preview = preview_reschedule_from_database(db, schedule_id, assignment_id)
+        if preview["status"] != "FEASIBLE":
+            raise SchedulingDataError("The reschedule candidate is not optimizer-verified feasible")
+        schedule = db.get(models.Schedule, schedule_id)
+        assignments = preview["assignments"]
+        db.query(models.ScheduleAssignment).filter_by(schedule_id=schedule_id).delete(synchronize_session=False)
+        db.query(models.ScheduleExplanation).filter_by(schedule_id=schedule_id).delete(synchronize_session=False)
+        for item in assignments:
+            db.add(models.ScheduleAssignment(
+                schedule_id=schedule_id, employee_id=item["employee_id"], shift_id=item["shift_id"],
+                regular_hours=float(item["regular_hours"]), overtime_hours=float(item["overtime_hours"]),
+                cost=float(item["cost"]),
+            ))
+            db.add(models.ScheduleExplanation(
+                schedule_id=schedule_id,
+                message="Assignment included in the optimizer-verified reschedule.",
+                details=json.dumps({"employee_id": item["employee_id"], "shift_id": item["shift_id"], "reschedule": True}),
+            ))
+        schedule.total_cost = float(preview["total_cost"])
+        schedule.overtime_hours = float(preview["total_overtime_hours"])
+        db.flush()
+        result = {**preview, "persisted": True, "schedule_id": schedule_id, "assignments": assignments}
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise

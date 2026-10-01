@@ -24,7 +24,8 @@ export const skillsApi = createResourceMethods('/skills')
 export const getEmployees = (params) => get('/employees', params)
 export const employeesApi = {
   ...createResourceMethods('/employees'),
-  addSkill: (employeeId, skillId) => apiClient.post(`/employees/${employeeId}/skills`, { skill_id: skillId }),
+  addSkill: (employeeId, skillId, proficiency = 1) => apiClient.post(`/employees/${employeeId}/skills`, { skill_id: skillId, proficiency }),
+  updateSkill: (employeeId, skillId, proficiency) => apiClient.put(`/employees/${employeeId}/skills/${skillId}`, { proficiency }),
   removeSkill: (employeeId, skillId) => apiClient.delete(`/employees/${employeeId}/skills/${skillId}`),
 }
 
@@ -60,6 +61,7 @@ export const generateSchedule = (payload) => apiClient.post('/optimization/gener
 export const generateAlternatives = (payload) => apiClient.post('/optimization/alternatives', payload)
 export const resolveConflict = (payload) => apiClient.post('/optimization/resolve-conflict', payload)
 export const previewReschedule = (payload) => apiClient.post('/optimization/reschedule-preview', payload)
+export const applyReschedule = (payload) => apiClient.post('/optimization/apply-reschedule', payload)
 
 const isDisplayableMessage = (value) => typeof value === 'string'
   && value.trim().length > 0

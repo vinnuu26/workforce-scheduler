@@ -11,6 +11,8 @@ A workforce planning application that stores employee and shift data, generates 
 - Diagnose infeasible inputs with evidence-based conflict details and inspect bounded resolution candidates tested by the production optimizer. Conflict analysis is non-persistent; leave and unsupported changes are shown as informational only.
 - Review saved assignments and the factual explanation/objective context recorded at generation time.
 - Preview a full-day absence against a saved schedule using the same optimizer. The preview does not modify the original schedule or save the candidate.
+- Apply an explicitly confirmed reschedule after the server reruns the optimizer; schedule assignments and totals are replaced in one database transaction.
+- Persist employee skill proficiency from levels 1–5; legacy employee-skill rows migrate to level 1.
 - View dashboard measures derived from current workforce, shifts, saved assignments, and saved conflicts.
 
 ## Architecture
@@ -20,6 +22,7 @@ A workforce planning application that stores employee and shift data, generates 
 - `backend/app/optimizer/`: database-independent optimizer model, constraints, objective hierarchy, solver, and project metrics.
 - `backend/app/services/`: database-to-optimizer mapping, persistence, alternatives, conflict diagnostics, and reschedule preview.
 - API routes are under `/api`; FastAPI documentation is at `/docs`.
+- CRUD is available for departments, skills, employees, shift templates, shifts, availability, leave, preferences, projects, requirements, and schedule metadata. Employee skill relationships support add, proficiency update, and remove. Schedule assignments are read-only outside optimizer generation and validated rescheduling.
 
 ## Local development
 
@@ -41,7 +44,7 @@ Copy `.env.example` to a local `.env` only if you need to override the database 
 
 The API listens on `http://localhost:8000`. The frontend development origin is allowed by the local CORS configuration.
 
-The API creates missing tables on startup but does not alter existing SQLite columns. When upgrading a pre-existing database that predates preference weights or project-aware scheduling, review and apply the ordered SQL files in `backend/migrations/` before starting the upgraded application.
+The API creates missing tables on startup and applies the additive employee-skill proficiency column migration when needed. When upgrading a pre-existing database that predates preference weights or project-aware scheduling, review and apply the earlier ordered SQL files in `backend/migrations/` before starting the upgraded application.
 
 ### Frontend
 
@@ -78,7 +81,7 @@ The development seeder adds rows only when their identifying demo values are mis
 .\venv\Scripts\python.exe scripts\seed_demo_data.py
 ```
 
-It creates three departments, skills, employees, shift templates, a feasible seven-day staffing period, explicit availability differences, approved leave, weighted preferences, projects and project requirements. It also creates a separate next-day shift with demand of 999 to demonstrate an intentionally infeasible staffing case. Use the printed date range in **Schedule** to generate the feasible roster; select the following day in **Conflicts** to run diagnostics. Seeded skills use the proficiency level supported by the current employee-skill database model (level 1).
+It creates three departments, skills, employees, shift templates, a feasible seven-day staffing period, explicit availability differences, approved leave, weighted preferences, projects and project requirements. It assigns varied employee skill levels from 1–5. It also creates a separate next-day shift with demand of 999 to demonstrate an intentionally infeasible staffing case. Use the printed date range in **Schedule** to generate the feasible roster; select the following day in **Conflicts** to run diagnostics.
 
 ## Demo workflow
 
@@ -88,11 +91,12 @@ It creates three departments, skills, employees, shift templates, a feasible sev
 4. Generate a schedule for the seeder’s seven-day period; inspect coverage, cost, assignments, and per-assignment explanation details.
 5. Generate one to three alternatives and inspect their returned metrics; alternatives are not saved.
 6. Choose a saved assignment under **Reschedule** to preview a full-day absence and compare optimizer output. The preview never changes the source schedule.
-7. Analyze the intentionally infeasible date under **Conflicts** and inspect tested resolution proposals. The analyzer does not apply changes.
+7. Analyze the intentionally infeasible date under **Conflicts** and inspect tested resolution proposals. Feasible resolutions are verified by the production optimizer; informational suggestions cannot be applied automatically.
+8. Select an assignment in **Reschedule**, preview a temporary full-day absence, review the before/after assignment differences, then explicitly confirm to apply the server-revalidated candidate.
 
 ## Rescheduling and data limitations
 
-The current preview models an employee as absent for the entire selected shift date. It uses a temporary approved-leave input and the existing optimizer, then compares assignments by shift ID. It does not optimize a minimum-change objective, persist the candidate, or provide an atomic schedule replacement/apply action. The dashboard omits preference and fairness scores because those values are not persisted with saved schedules. Constraint objective weights are not configurable through the current backend API. Employee skill proficiency is stored as level 1; the optimizer supports richer levels only for direct optimizer input.
+The preview models an employee as absent for the entire selected shift date. It uses temporary approved leave and the existing optimizer, then compares assignments by shift ID. Applying reruns this candidate on the server and atomically replaces assignments and totals while preserving schedule identity and date metadata. The candidate is rejected if no longer feasible. The dashboard omits preference and fairness scores because those values are not persisted with saved schedules. Arbitrary objective weights are intentionally not configurable: the solver uses proven lexicographic stages, and combining them into weighted sums would change the documented priority guarantees. Hard constraints remain mandatory. Conflict resolution currently analyzes infeasibility and returns verified changes for review; direct automatic application of conflict suggestions is not wired into the reschedule flow. Employee skill proficiency is persisted on a 1–5 scale and checked against project minimum proficiency.
 
 ## Environment variables
 

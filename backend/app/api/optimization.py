@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..schemas import OptimizationRequest, ReschedulePreviewRequest
+from ..schemas import OptimizationRequest, ReschedulePreviewRequest, RescheduleApplyRequest
 from ..schemas import AlternativeOptimizationRequest
 from ..services.alternative_schedule_service import generate_alternative_schedules
 from ..services.scheduling_service import (
     SchedulingDataError, generate_schedule_from_database, preview_reschedule_from_database,
-    resolve_conflicts_from_database,
+    resolve_conflicts_from_database, apply_reschedule_from_database,
 )
 
 router = APIRouter(prefix="/optimization", tags=["optimization"])
@@ -37,6 +37,14 @@ def resolve_conflict(payload: OptimizationRequest, db: Session = Depends(get_db)
 def reschedule_preview(payload: ReschedulePreviewRequest, db: Session = Depends(get_db)):
     try:
         return preview_reschedule_from_database(db, payload.schedule_id, payload.assignment_id)
+    except SchedulingDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/apply-reschedule")
+def apply_reschedule(payload: RescheduleApplyRequest, db: Session = Depends(get_db)):
+    try:
+        return apply_reschedule_from_database(db, payload.schedule_id, payload.assignment_id, payload.confirmed)
     except SchedulingDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
