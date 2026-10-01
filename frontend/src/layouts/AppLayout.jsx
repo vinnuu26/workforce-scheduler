@@ -1,26 +1,42 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Bell, CalendarClock, CalendarDays, FileText, FolderKanban, LayoutDashboard, ListChecks, Menu, Search, Settings2, SlidersHorizontal, TriangleAlert, Users, WandSparkles, X, ChevronDown } from 'lucide-react'
+import { CalendarClock, CalendarDays, FolderKanban, LayoutDashboard, Menu, SlidersHorizontal, TriangleAlert, Users, WandSparkles, X } from 'lucide-react'
 import { useState } from 'react'
-import { Avatar, Badge } from '../components/UI'
+import { Badge } from '../components/UI'
 
 const items = [
-  { label: 'Dashboard', to: '/', icon: LayoutDashboard }, { label: 'Employees', to: '/employees', icon: Users }, { label: 'Shifts', to: '/shifts', icon: CalendarClock }, { label: 'Projects', to: '/projects', icon: FolderKanban }, { label: 'Constraints', to: '/constraints', icon: SlidersHorizontal }, { label: 'Schedule', to: '/schedule', icon: CalendarDays }, { label: 'Conflicts', to: '/conflicts', icon: TriangleAlert, count: '3' }, { label: 'Reschedule', to: '/reschedule', icon: WandSparkles },
+  { label: 'Dashboard', to: '/', icon: LayoutDashboard },
+  { label: 'Employees', to: '/employees', icon: Users },
+  { label: 'Shifts', to: '/shifts', icon: CalendarClock },
+  { label: 'Projects', to: '/projects', icon: FolderKanban },
+  { label: 'Constraints', to: '/constraints', icon: SlidersHorizontal },
+  { label: 'Schedule', to: '/schedule', icon: CalendarDays },
+  { label: 'Conflicts', to: '/conflicts', icon: TriangleAlert },
+  { label: 'Reschedule', to: '/reschedule', icon: WandSparkles },
 ]
 const titles = Object.fromEntries(items.map((item) => [item.to, item.label]))
+const descriptions = {
+  '/': 'Workforce counts and latest saved schedule metrics from the backend',
+  '/employees': 'Employee, department, and skill records from the backend',
+  '/shifts': 'Dated staffing requirements from the backend',
+  '/projects': 'Projects and optimizer requirements from the backend',
+  '/constraints': 'Live source record counts and optimizer rule reference',
+  '/schedule': 'Schedules and optimization connected to the workforce backend',
+  '/conflicts': 'Persisted conflicts and non-persistent optimizer diagnostics',
+  '/reschedule': 'Non-persistent reschedule preview using the optimizer',
+}
+
 export default function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const { pathname } = useLocation()
   const title = titles[pathname] || 'Dashboard'
-  const isEmployeesPage = pathname === '/employees'
   return <div className="min-h-screen bg-canvas md:flex">
     {mobileOpen && <button aria-label="Close navigation" onClick={() => setMobileOpen(false)} className="fixed inset-0 z-30 bg-slate-900/30 md:hidden" />}
     <aside className={`fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-line bg-white transition-transform md:sticky md:top-0 md:h-screen md:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-      <div className="flex h-[68px] items-center justify-between border-b border-line px-5"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white"><CalendarDays size={18} /></div><div><div className="text-sm font-semibold tracking-tight text-ink">Workforce</div><div className="text-[11px] text-muted">Scheduler</div></div></div><button onClick={() => setMobileOpen(false)} className="rounded p-1 text-muted md:hidden"><X size={18} /></button></div>
-      <div className="px-4 pt-5"><button className="flex w-full items-center gap-3 rounded-lg border border-line px-3 py-2.5 text-left hover:bg-slate-50"><div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#eef4f3] text-brand"><LayoutDashboard size={16} /></div><div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-ink">Acme Operations</p><p className="mt-0.5 text-[10px] text-muted">Workspace</p></div><ChevronDown size={14} className="text-muted" /></button></div>
-      <nav className="flex-1 px-3 pt-7"><p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[.15em] text-slate-400">Workspace</p><div className="space-y-1">{items.map(({ label, to, icon: Icon, count }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileOpen(false)} className={({ isActive }) => `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors ${isActive ? 'bg-[#eaf4f2] text-[#126f68]' : 'text-slate-600 hover:bg-slate-50 hover:text-ink'}`}><Icon size={17} strokeWidth={1.8} /><span className="flex-1">{label}</span>{count && <span className="rounded-md bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">{count}</span>}</NavLink>)}</div></nav>
-      <div className="m-3 rounded-xl border border-[#e3eeec] bg-[#f6faf9] p-3.5"><div className="flex items-center gap-2 text-xs font-semibold text-ink"><div className="rounded-md bg-white p-1.5 text-brand shadow-sm"><FileText size={14} /></div>Planning period</div><p className="mt-3 text-xs font-medium text-ink">October 2026</p><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className="h-full w-[68%] rounded-full bg-brand" /></div><p className="mt-2 text-[10px] text-muted">Planning in progress · 68%</p></div>
-      <div className="border-t border-line p-3"><button className="flex w-full items-center gap-3 rounded-lg p-2 hover:bg-slate-50"><Avatar name="Aarav Patel" /><div className="min-w-0 flex-1 text-left"><p className="truncate text-xs font-semibold text-ink">Aarav Patel</p><p className="truncate text-[10px] text-muted">Operations manager</p></div><Settings2 size={15} className="text-muted" /></button></div>
+      <div className="flex h-[68px] items-center justify-between border-b border-line px-5"><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white"><CalendarDays size={18}/></div><div><div className="text-sm font-semibold tracking-tight text-ink">Workforce</div><div className="text-[11px] text-muted">Scheduler</div></div></div><button aria-label="Close navigation" onClick={() => setMobileOpen(false)} className="rounded p-1 text-muted md:hidden"><X size={18}/></button></div>
+      <div className="mx-4 mt-5 rounded-lg border border-line bg-slate-50 px-3 py-3"><p className="text-xs font-semibold text-ink">Workforce workspace</p><p className="mt-1 text-[10px] text-muted">Connected application data</p></div>
+      <nav className="flex-1 px-3 pt-7"><p className="mb-3 px-3 text-[10px] font-semibold uppercase tracking-[.15em] text-slate-400">Workspace</p><div className="space-y-1">{items.map(({ label, to, icon: Icon }) => <NavLink key={to} to={to} end={to === '/'} onClick={() => setMobileOpen(false)} className={({ isActive }) => `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-colors ${isActive ? 'bg-[#eaf4f2] text-[#126f68]' : 'text-slate-600 hover:bg-slate-50 hover:text-ink'}`}><Icon size={17} strokeWidth={1.8}/><span>{label}</span></NavLink>)}</div></nav>
+      <NavLink to="/schedule" className="m-3 rounded-xl border border-[#e3eeec] bg-[#f6faf9] p-3.5 hover:bg-[#eef7f5]"><div className="text-xs font-semibold text-ink">Schedule planning</div><p className="mt-1 text-[11px] text-muted">Generate a roster from configured workforce data.</p></NavLink>
     </aside>
-    <div className="min-w-0 flex-1"><header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-line bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-9"><div className="flex items-center gap-3"><button aria-label="Open navigation" onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-muted hover:bg-slate-100 md:hidden"><Menu size={19} /></button><div><p className="text-sm font-semibold text-ink">{title}</p><p className="hidden text-[11px] text-muted sm:block">Acme Operations <span className="mx-1.5 text-slate-300">/</span>{title}</p></div></div><div className="flex items-center gap-2 sm:gap-3"><div className="hidden items-center gap-2 rounded-lg border border-line px-3 py-2 text-xs text-muted lg:flex"><Search size={14} /><span>Search anything</span><kbd className="ml-7 rounded border border-line px-1.5 py-0.5 text-[10px]">⌘ K</kbd></div><button className="relative rounded-lg p-2 text-slate-500 hover:bg-slate-100" aria-label="Notifications"><Bell size={18} /><span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full border-2 border-white bg-rose-500" /></button><div className="hidden h-7 w-px bg-line sm:block" /><div className="hidden items-center gap-2 sm:flex"><Avatar name="Aarav Patel" size="sm" /><ChevronDown size={14} className="text-muted" /></div></div></header><main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9"><div className="mb-5 flex flex-wrap items-center gap-2"><Badge tone={isEmployeesPage ? 'green' : 'amber'} dot>{isEmployeesPage ? 'LIVE API' : 'MOCK DATA'}</Badge><span className="text-xs text-muted">{isEmployeesPage ? 'Employee records loaded from the workforce backend' : 'Sample figures for layout preview · Not connected to live backend'}</span></div><Outlet /></main></div>
+    <div className="min-w-0 flex-1"><header className="sticky top-0 z-20 flex h-[68px] items-center justify-between border-b border-line bg-white/95 px-4 backdrop-blur sm:px-6 lg:px-9"><div className="flex items-center gap-3"><button aria-label="Open navigation" onClick={() => setMobileOpen(true)} className="rounded-lg p-2 text-muted hover:bg-slate-100 md:hidden"><Menu size={19}/></button><div><p className="text-sm font-semibold text-ink">{title}</p><p className="hidden text-[11px] text-muted sm:block">Workforce <span className="mx-1.5 text-slate-300">/</span>{title}</p></div></div><Badge tone="green" dot>LIVE API</Badge></header><main className="mx-auto max-w-[1500px] px-4 py-6 sm:px-6 sm:py-8 lg:px-9"><div className="mb-5 flex flex-wrap items-center gap-2"><span className="text-xs text-muted">{descriptions[pathname] || descriptions['/']}</span></div><Outlet/></main></div>
   </div>
 }

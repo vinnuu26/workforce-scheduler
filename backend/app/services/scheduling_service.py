@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import date, datetime, time, timedelta
+from dataclasses import replace
+import json
 from typing import Any
 
 from sqlalchemy import func, select
@@ -17,6 +19,7 @@ from app.optimizer.model import (
     normalize_preference_weight, scheduling_input_from_mapping,
 )
 from app.optimizer.solver import solve_schedule
+from app.optimizer.constraints import _availability_covers, _on_approved_leave
 from app.services.conflict_detection_service import detect_conflicts
 from app.conflicts.resolution import resolve_conflicts
 
@@ -236,6 +239,7 @@ def generate_schedule_from_database(
         return response
 
     try:
+        optimizer_shifts_by_id = {item.id: item for item in data.shifts}
         schedule = models.Schedule(
             name=f"Generated schedule {start_date.isoformat()} to {end_date.isoformat()}",
             start_date=start_date, end_date=end_date, status="generated",
@@ -254,6 +258,30 @@ def generate_schedule_from_database(
                 schedule_id=schedule.id, employee_id=employee.id, shift_id=shift.id,
                 regular_hours=hours, overtime_hours=0.0, cost=cost,
             ))
+            explanation = {
+                "employee_id": employee.id,
+                "shift_id": shift.id,
+                "project_id": shift.project_id,
+                "department": shift.department.name if shift.department else None,
+                "required_skills_matched": [skill.name for skill in shift.required_skills],
+                "eligibility_checks": {
+                    "employee_active": bool(employee.active),
+                    "department_match": bool(shift.department_id is None or employee.department_id == shift.department_id),
+                    "available_for_complete_shift": _availability_covers(employee.id, optimizer_shifts_by_id[shift.id], data.availability),
+                    "approved_leave_applied": _on_approved_leave(employee.id, optimizer_shifts_by_id[shift.id], data.leave),
+                },
+                "preference_match": assignment.get("preference_match"),
+                "preference_reasons": assignment.get("preference_reasons", []),
+                "optimizer_objective": result.objective,
+                "preference_metrics": result.preference,
+                "fairness_metrics": result.fairness,
+                "project_metrics": result.projects,
+            }
+            db.add(models.ScheduleExplanation(
+                schedule_id=schedule.id,
+                message="The optimizer included this assignment in a feasible schedule after applying its hard constraints and objective order.",
+                details=json.dumps(explanation, sort_keys=True),
+            ))
             enriched.append({
                 **assignment,
                 "department": shift.department.name if shift.department else None,
@@ -265,3 +293,43 @@ def generate_schedule_from_database(
     except Exception:
         db.rollback()
         raise
+
+
+def preview_reschedule_from_database(db: Session, schedule_id: int, assignment_id: int) -> dict[str, Any]:
+    """Preview a full-day absence for an assigned employee without changing stored rows."""
+    schedule = db.get(models.Schedule, schedule_id)
+    if schedule is None:
+        raise SchedulingDataError(f"schedule_id {schedule_id} does not reference an existing schedule")
+    if schedule.start_date is None or schedule.end_date is None:
+        raise SchedulingDataError("The selected schedule has no complete date range")
+    assignment = db.get(models.ScheduleAssignment, assignment_id)
+    if assignment is None or assignment.schedule_id != schedule_id:
+        raise SchedulingDataError(f"assignment_id {assignment_id} is not part of schedule {schedule_id}")
+    shift = db.get(models.Shift, assignment.shift_id)
+    if shift is None or shift.date < schedule.start_date or shift.date > schedule.end_date:
+        raise SchedulingDataError("The selected assignment shift is outside the saved schedule period")
+
+    data, _employees, _shifts = prepare_scheduling_input(db, schedule.start_date, schedule.end_date)
+    candidate = replace(data, leave=(*data.leave, LeavePeriod(
+        employee_id=assignment.employee_id, start_date=shift.date, end_date=shift.date, status="approved",
+    )))
+    result = solve_schedule(candidate)
+    return {
+        "status": result.status,
+        "source_schedule_id": schedule_id,
+        "source_assignment_id": assignment_id,
+        "affected_employee_id": assignment.employee_id,
+        "affected_shift_id": assignment.shift_id,
+        "absence_date": shift.date,
+        "persisted": False,
+        "assignments": result.assignments,
+        "total_required_staff": result.total_required_staff,
+        "total_assigned_staff": result.total_assigned_staff,
+        "total_cost": result.total_cost,
+        "total_overtime_hours": result.total_overtime_hours,
+        "objective": result.objective,
+        "preference": result.preference,
+        "fairness": result.fairness,
+        "projects": result.projects,
+        "conflicts": detect_conflicts(candidate) if result.status == "INFEASIBLE" else [],
+    }

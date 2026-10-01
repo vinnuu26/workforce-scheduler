@@ -28,3 +28,7 @@ class OptimizationRequest(APIModel):
 
 class AlternativeOptimizationRequest(OptimizationRequest):
     count:int=Field(default=3,ge=1,le=5)
+
+class ReschedulePreviewRequest(APIModel):
+    schedule_id: int = Field(ge=1)
+    assignment_id: int = Field(ge=1)

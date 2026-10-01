@@ -1,6 +1,88 @@
-import { useState } from 'react'
-import { ArrowRight, Check, CheckCircle2, ChevronRight, RotateCcw, WandSparkles } from 'lucide-react'
-import { Badge, Button, Card, CardHeading, PageHeader, Select } from '../components/UI'
-import { employees } from '../data/mockData'
-const affected = [{ name: 'Rahul Sharma', shift: 'Morning · 7 Oct', status: 'Reassigned', tone: 'green' }, { name: 'Priya Nair', shift: 'Day · 7 Oct', status: 'Unchanged', tone: 'gray' }, { name: 'Arjun Mehta', shift: 'Evening · 7 Oct', status: 'Reassigned', tone: 'green' }, { name: 'Kabir Singh', shift: 'Night · 7 Oct', status: 'Unchanged', tone: 'gray' }]
-export default function Reschedule() { const [employee, setEmployee] = useState(''), [absence, setAbsence] = useState(''), [ran, setRan] = useState(false); const selected = employees.find((item) => item.id === Number(employee)); return <><PageHeader eyebrow="Schedule changes" title="Reschedule" description="Plan an absence and review its impact before updating assignments." action={<Badge tone="amber" dot>Preview only · Mock data</Badge>} /><div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-5"><Card className="xl:col-span-2"><CardHeading title="Plan an absence" subtitle="Select a team member and absence date."/><div className="space-y-4 p-5"><div><label className="mb-1.5 block text-xs font-medium text-ink">Employee</label><Select className="w-full" value={employee} onChange={(e) => setEmployee(e.target.value)}><option value="">Select an employee</option>{employees.filter((item) => item.active).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.department}</option>)}</Select></div><div><label className="mb-1.5 block text-xs font-medium text-ink">Absence date</label><Select className="w-full" value={absence} onChange={(e) => setAbsence(e.target.value)}><option value="">Select a date</option>{['6 Oct 2026', '7 Oct 2026', '8 Oct 2026', '9 Oct 2026'].map((x) => <option key={x}>{x}</option>)}</Select></div><div className="rounded-lg border border-dashed border-line bg-slate-50 p-3.5"><p className="text-xs font-semibold text-ink">Affected shifts</p>{selected ? <div className="mt-2 space-y-2"><p className="text-xs text-muted">{absence || 'Selected day'} · {selected.department}</p><p className="flex items-center gap-2 text-sm text-ink"><span className="h-2 w-2 rounded-full bg-brand"/>Morning shift <span className="ml-auto text-xs text-muted">06:00 – 14:00</span></p><p className="text-[11px] text-muted">Illustrative shift impact for selected employee.</p></div> : <p className="mt-2 text-xs text-muted">Choose an employee to preview their affected assignments.</p>}</div><div><label className="mb-1.5 block text-xs font-medium text-ink">Absence type</label><Select className="w-full"><option>Personal leave</option><option>Sick leave</option><option>Other</option></Select></div><Button className="w-full" onClick={() => setRan(true)} disabled={!selected || !absence} icon={WandSparkles}>Preview re-optimization</Button><p className="text-center text-[10px] text-muted">No schedule is changed by this preview.</p></div></Card><div className="space-y-4 xl:col-span-3"><Card><CardHeading title="Impact summary" subtitle="Illustrative figures for this scenario" action={<Badge tone={ran ? 'green' : 'gray'} dot>{ran ? 'Preview ready' : 'Not run'}</Badge>}/><div className="grid grid-cols-3 gap-2 p-5 pt-4">{[['Affected employees', ran ? '4' : '—'], ['Changed assignments', ran ? '2' : '—'], ['Unchanged assignments', ran ? '2' : '—']].map(([label, value]) => <div className="rounded-lg bg-slate-50 p-3" key={label}><p className="text-lg font-semibold text-ink">{value}</p><p className="mt-1 text-[10px] leading-snug text-muted">{label}</p></div>)}</div></Card><Card><CardHeading title="Proposed schedule changes" subtitle="Review updates before they are applied." action={ran && <Button variant="outline" onClick={() => setRan(false)} icon={RotateCcw}>Reset</Button>}/>{ran ? <div className="divide-y divide-line px-5 pb-2">{affected.map((item) => <div className="flex items-center gap-3 py-3" key={item.name}><div className={`rounded-lg p-2 ${item.status === 'Reassigned' ? 'bg-teal-50 text-brand' : 'bg-slate-100 text-slate-500'}`}>{item.status === 'Reassigned' ? <WandSparkles size={15}/> : <Check size={15}/>}</div><div className="flex-1"><p className="text-sm font-medium text-ink">{item.name}</p><p className="mt-0.5 text-xs text-muted">{item.shift}</p></div><Badge tone={item.tone}>{item.status}</Badge>{item.status === 'Reassigned' && <ChevronRight size={15} className="text-muted"/>}</div>)}</div> : <div className="p-5 pt-2"><div className="flex min-h-40 flex-col items-center justify-center rounded-lg border border-dashed border-line bg-slate-50/50 px-4 text-center"><div className="rounded-full bg-white p-3 text-muted shadow-sm"><WandSparkles size={18}/></div><p className="mt-3 text-sm font-medium text-ink">Your preview will appear here</p><p className="mt-1 max-w-xs text-xs text-muted">Choose a team member and date, then preview a sample reschedule.</p></div></div>}</Card>{ran && <div className="flex flex-wrap justify-end gap-2"><Button variant="outline" onClick={() => setRan(false)}>Discard preview</Button><Button disabled icon={CheckCircle2}>Apply changes (not available)</Button></div>}</div></div></> }
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { RefreshCw, WandSparkles } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Badge, Button, Card, EmptyState, LoadingState, PageHeader, Select } from '../components/UI'
+import { getApiErrorMessage, getSchedules, previewReschedule, schedulesApi } from '../services/api'
+
+const dateLabel = (value) => value ? new Date(`${String(value).slice(0, 10)}T12:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '—'
+
+export default function Reschedule() {
+  const [schedules, setSchedules] = useState([])
+  const [scheduleId, setScheduleId] = useState('')
+  const [assignments, setAssignments] = useState([])
+  const [assignmentId, setAssignmentId] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const loadSchedules = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const response = await getSchedules({ limit: 500 })
+      setSchedules(Array.isArray(response.data) ? response.data : [])
+    } catch (e) { setError(getApiErrorMessage(e)) } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { loadSchedules() }, [loadSchedules])
+
+  const selectedAssignment = assignments.find((item) => String(item.id) === assignmentId)
+  const originalByShift = useMemo(() => new Map(assignments.map((item) => [item.shift_id, item])), [assignments])
+  const candidateByShift = useMemo(() => new Map((preview?.assignments || []).map((item) => [item.shift_id, item])), [preview])
+  const changed = useMemo(() => {
+    if (!preview || preview.status !== 'FEASIBLE') return []
+    const shiftIds = new Set([...originalByShift.keys(), ...candidateByShift.keys()])
+    return [...shiftIds]
+      .filter((id) => originalByShift.get(id)?.employee_id !== candidateByShift.get(id)?.employee_id)
+      .map((id) => ({ shiftId: id, before: originalByShift.get(id), after: candidateByShift.get(id) }))
+  }, [preview, originalByShift, candidateByShift])
+  const affectedEmployees = new Set(changed.flatMap((item) => [item.before?.employee_id, item.after?.employee_id].filter(Boolean))).size
+
+  const loadAssignments = async (id) => {
+    setScheduleId(id); setAssignmentId(''); setAssignments([]); setPreview(null); setError('')
+    if (!id) return
+    setBusy(true)
+    try {
+      const response = await schedulesApi.getAssignments(id)
+      setAssignments(Array.isArray(response.data) ? response.data : [])
+    } catch (e) { setError(getApiErrorMessage(e)) } finally { setBusy(false) }
+  }
+  const runPreview = async () => {
+    if (!selectedAssignment) return
+    setBusy(true); setError(''); setPreview(null)
+    try { setPreview((await previewReschedule({ schedule_id: Number(scheduleId), assignment_id: selectedAssignment.id })).data) }
+    catch (e) { setError(getApiErrorMessage(e)) } finally { setBusy(false) }
+  }
+
+  return <>
+    <PageHeader eyebrow="Schedule changes · Live optimizer" title="Reschedule preview" description="Test a full-day absence against a saved schedule and compare a feasible optimizer result without changing stored data." action={<Button variant="outline" icon={RefreshCw} onClick={loadSchedules}>Refresh schedules</Button>}/>
+    <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-5">
+      <Card className="xl:col-span-2"><div className="space-y-4 p-5">
+        <h2 className="text-sm font-semibold text-ink">Select the absence scenario</h2>
+        {loading ? <LoadingState label="Loading saved schedules…"/> : <>
+          <label className="block text-xs font-medium text-ink">Saved schedule<Select aria-label="Saved schedule" className="mt-1.5 w-full" value={scheduleId} onChange={(e) => loadAssignments(e.target.value)}><option value="">Select a schedule</option>{schedules.map((item) => <option key={item.id} value={item.id}>{item.name || `Schedule #${item.id}`} · {dateLabel(item.start_date)}</option>)}</Select></label>
+          <label className="block text-xs font-medium text-ink">Affected assignment<Select aria-label="Affected assignment" className="mt-1.5 w-full" value={assignmentId} onChange={(e) => { setAssignmentId(e.target.value); setPreview(null) }} disabled={!assignments.length}><option value="">Select an assignment</option>{assignments.map((item) => <option key={item.id} value={item.id}>{item.employee_name} · {item.shift_name} · {dateLabel(item.shift_date)}</option>)}</Select></label>
+          {selectedAssignment && <div className="rounded-lg border border-dashed border-line bg-slate-50 p-3"><p className="text-xs font-semibold text-ink">Previewed absence</p><p className="mt-1 text-sm text-slate-700">{selectedAssignment.employee_name} unavailable all day on {dateLabel(selectedAssignment.shift_date)}</p><p className="mt-1 text-xs text-muted">The scenario applies temporary approved leave for this preview only.</p></div>}
+          <Button className="w-full" disabled={!selectedAssignment || busy} onClick={runPreview} icon={WandSparkles}>{busy ? 'Testing with optimizer…' : 'Preview re-optimization'}</Button>
+          <p className="text-center text-[11px] text-muted">The source schedule remains unchanged. Preview results are not persisted.</p>
+        </>}
+      </div></Card>
+      <div className="space-y-4 xl:col-span-3">
+        {error && <Card className="p-4"><p role="alert" className="text-sm text-rose-700">{error}</p></Card>}
+        {busy && scheduleId && <Card><LoadingState label="Running the existing schedule optimizer…"/></Card>}
+        {preview && <>
+          <Card><div className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-ink">Reschedule comparison</h2><p className="mt-1 text-xs text-muted">Original schedule #{preview.source_schedule_id} · {dateLabel(preview.absence_date)}</p></div><Badge tone={preview.status === 'FEASIBLE' ? 'green' : 'rose'} dot>{preview.status}</Badge></div>
+            {preview.status === 'FEASIBLE' ? <><div className="mt-4 grid grid-cols-3 gap-2">{[['Changed shifts', changed.length], ['Affected employees', affectedEmployees], ['Candidate assignments', preview.assignments.length]].map(([label, value]) => <div key={label} className="rounded-lg bg-slate-50 p-3"><p className="text-lg font-semibold text-ink">{value}</p><p className="mt-1 text-xs text-muted">{label}</p></div>)}</div><p className="mt-3 text-xs text-muted">Changed counts are direct comparisons by shift ID. This preview does not optimize a dedicated minimal-change objective.</p></> : <div className="mt-4 rounded-lg border border-rose-100 bg-rose-50 p-4"><p className="text-sm font-semibold text-rose-900">No feasible revised schedule was returned.</p><p className="mt-1 text-sm text-rose-800">The saved schedule remains intact. See the returned optimizer diagnostics below.</p>{preview.conflicts?.map((item, index) => <p key={item.conflict_id || index} className="mt-2 text-xs text-rose-800">{item.type}: {item.message}</p>)}<Link to="/conflicts" className="mt-3 inline-block text-sm font-semibold text-brand">Open conflict analysis →</Link></div>}
+          </div></Card>
+          {preview.status === 'FEASIBLE' && <>
+            <Card><div className="border-b border-line p-5"><h2 className="text-sm font-semibold text-ink">Assignment differences</h2><p className="mt-1 text-xs text-muted">All returned differences are computed against the stored assignments.</p></div>
+              {changed.length ? <div className="divide-y divide-line">{changed.map(({ shiftId, before, after }) => <div key={shiftId} className="flex flex-wrap items-center gap-3 p-4"><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-ink">{after?.shift_name || before?.shift_name || `Shift #${shiftId}`}</p><p className="text-xs text-muted">{dateLabel(after?.shift_date || before?.shift_date)}</p></div><div className="text-right text-xs"><p className="text-muted">{before?.employee_name || 'Unassigned'} <span aria-hidden="true">→</span></p><p className="font-semibold text-ink">{after?.employee_name || 'Unassigned'}</p></div><Badge tone="blue">Changed</Badge></div>)}</div> : <div className="p-5"><EmptyState title="No assignment changes" description="The feasible candidate has the same employee assignments as the saved schedule."/></div>}
+            </Card>
+            <Card className="p-4"><p className="text-sm font-semibold text-ink">Applying changes is not available</p><p className="mt-1 text-xs text-muted">The backend has no atomic validated schedule replacement endpoint. This page keeps the original unchanged and only previews the optimizer output.</p></Card>
+          </>}
+        </>}
+        {!preview && !loading && !busy && !error && <Card><EmptyState title="No preview yet" description="Select a saved schedule and an assignment, then run the optimizer-backed absence preview."/></Card>}
+      </div>
+    </div>
+  </>
+}

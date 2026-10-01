@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter,Depends,HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -41,6 +42,14 @@ def remove_requirement(project_id:int,requirement_id:int,db:Session=Depends(get_
 def assignments(schedule_id:int,db:Session=Depends(get_db)):
  get_item(db,models.Schedule,schedule_id)
  rows=list_items(db,models.ScheduleAssignment,0,500,{"schedule_id":schedule_id})
+ explanation_rows=list_items(db,models.ScheduleExplanation,0,500,{"schedule_id":schedule_id})
+ explanation_by_pair={}
+ for explanation in explanation_rows:
+  try:
+   details=json.loads(explanation.details or "{}")
+   explanation_by_pair[(details.get("employee_id"),details.get("shift_id"))]={"message":explanation.message,"details":details}
+  except (TypeError,ValueError):
+   continue
  result=[]
  for item in rows:
   employee=get_item(db,models.Employee,item.employee_id); shift=get_item(db,models.Shift,item.shift_id)
@@ -53,7 +62,9 @@ def assignments(schedule_id:int,db:Session=Depends(get_db)):
    "shift_name":template.name if template else f"Shift {shift.id}","shift_date":shift.date,
    "start_time":start,"end_time":end,"department":department.name if department else None,
    "hours":item.regular_hours+item.overtime_hours,"regular_hours":item.regular_hours,
-   "overtime_hours":item.overtime_hours,"cost":item.cost,"notes":item.notes})
+   "overtime_hours":item.overtime_hours,"cost":item.cost,"notes":item.notes,
+   "project_id":shift.project_id,
+   "explanation":explanation_by_pair.get((item.employee_id,item.shift_id))})
  return result
 @router.post("/schedules/{schedule_id}/assignments",status_code=201)
 def add_assignment(schedule_id:int,payload:schemas.AssignmentCreate,db:Session=Depends(get_db)):

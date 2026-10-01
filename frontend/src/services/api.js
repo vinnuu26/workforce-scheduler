@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.PROD ? '' : 'http://localhost:8000')
 
 export const apiClient = axios.create({
   baseURL: `${configuredBaseUrl.replace(/\/+$/, '')}/api`,
@@ -59,6 +59,7 @@ export const schedulesApi = {
 export const generateSchedule = (payload) => apiClient.post('/optimization/generate', payload)
 export const generateAlternatives = (payload) => apiClient.post('/optimization/alternatives', payload)
 export const resolveConflict = (payload) => apiClient.post('/optimization/resolve-conflict', payload)
+export const previewReschedule = (payload) => apiClient.post('/optimization/reschedule-preview', payload)
 
 const isDisplayableMessage = (value) => typeof value === 'string'
   && value.trim().length > 0
