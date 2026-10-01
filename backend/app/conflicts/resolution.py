@@ -222,10 +222,22 @@ def _proposal(operation: dict[str, Any], data: SchedulingInput, *, operations=No
             details = {"changes": details if isinstance(details, list) else [details],
                        "verified_department_assignments": department_pairs}
     description = "; ".join(_description(item, data) for item in ops)
+    public_operations = []
+    for item in ops:
+        public_operations.append({key: value.isoformat() if hasattr(value, "isoformat") else value
+                                 for key, value in item.items() if key != "target"})
     return {"resolution_id": "", "type": kind, "description": description,
             "testable": True, "feasible": True, "change_size": total_size,
             "affected_shift_ids": shift_ids, "affected_employee_ids": employee_ids,
-            "affected_project_ids": project_ids, "details": details}
+            "affected_project_ids": project_ids, "details": details, "operations": public_operations}
+
+
+def apply_resolution_operations(data: SchedulingInput, operations: list[dict[str, Any]]) -> SchedulingInput:
+    """Apply only immutable optimizer input operations; caller must validate feasibility."""
+    candidate = data
+    for operation in operations:
+        candidate = _clone_with(candidate, operation)
+    return candidate
 
 
 def _description(operation: dict[str, Any], data: SchedulingInput) -> str:

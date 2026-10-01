@@ -62,6 +62,8 @@ export const generateAlternatives = (payload) => apiClient.post('/optimization/a
 export const resolveConflict = (payload) => apiClient.post('/optimization/resolve-conflict', payload)
 export const previewReschedule = (payload) => apiClient.post('/optimization/reschedule-preview', payload)
 export const applyReschedule = (payload) => apiClient.post('/optimization/apply-reschedule', payload)
+export const previewConflictResolution = (payload) => apiClient.post('/optimization/resolution-preview', payload)
+export const applyConflictResolution = (payload) => apiClient.post('/optimization/apply-resolution', payload)
 
 const isDisplayableMessage = (value) => typeof value === 'string'
   && value.trim().length > 0

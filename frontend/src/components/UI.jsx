@@ -1,3 +1,5 @@
+import { CircleHelp } from 'lucide-react'
+
 export function PageHeader({ eyebrow, title, description, action }) {
   return <div className="mb-7 flex flex-wrap items-end justify-between gap-4"><div><p className="mb-2 text-xs font-semibold uppercase tracking-[.14em] text-brand">{eyebrow}</p><h1 className="text-[26px] font-semibold tracking-tight text-ink">{title}</h1>{description && <p className="mt-1.5 max-w-2xl text-sm text-muted">{description}</p>}</div>{action}</div>
 }

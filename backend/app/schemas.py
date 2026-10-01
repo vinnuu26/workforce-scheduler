@@ -36,6 +36,20 @@ class ReschedulePreviewRequest(APIModel):
 class RescheduleApplyRequest(ReschedulePreviewRequest):
     confirmed: bool
 
+class ConflictResolutionRequest(APIModel):
+    start_date: date
+    end_date: date
+    resolution_id: str = Field(min_length=1, max_length=16)
+    department_id: int|None=None
+    project_id: int|None=None
+    confirmed: bool = False
+
+    @model_validator(mode="after")
+    def validate_resolution_range(self):
+        if self.end_date < self.start_date:
+            raise ValueError("end_date must be on or after start_date")
+        return self
+
 class EmployeeSkillRequest(APIModel):
     skill_id: int = Field(ge=1)
     proficiency: int = Field(default=1, ge=1, le=5)

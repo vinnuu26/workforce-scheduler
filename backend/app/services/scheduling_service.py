@@ -21,11 +21,131 @@ from app.optimizer.model import (
 from app.optimizer.solver import solve_schedule
 from app.optimizer.constraints import _availability_covers, _on_approved_leave
 from app.services.conflict_detection_service import detect_conflicts
-from app.conflicts.resolution import resolve_conflicts
+from app.conflicts.resolution import resolve_conflicts, apply_resolution_operations
 
 
 class SchedulingDataError(ValueError):
     """Raised when persisted inputs are malformed before optimization starts."""
+
+
+APPLYABLE_RESOLUTION_TYPES = {
+    "REDUCE_STAFFING_REQUIREMENT", "ADJUST_PROJECT_REQUIRED_HOURS",
+    "ADJUST_PROJECT_REQUIRED_COUNT", "EXTEND_PROJECT_DEADLINE",
+}
+
+
+def _verified_resolution_input(db: Session, start_date: date, end_date: date,
+                               resolution_id: str, department_id: int | None,
+                               project_id: int | None):
+    original, employees, shifts = prepare_scheduling_input(db, start_date, end_date, department_id, project_id)
+    analysis = resolve_conflicts(original)
+    proposal = next((item for item in analysis.get("resolutions", [])
+                     if item.get("resolution_id") == resolution_id), None)
+    if not proposal or proposal.get("testable") is not True or proposal.get("feasible") is not True:
+        raise SchedulingDataError("Resolution is missing, stale, untestable, or not optimizer-verified feasible")
+    operations = proposal.get("operations") or []
+    if not operations or any(item.get("type") not in APPLYABLE_RESOLUTION_TYPES for item in operations):
+        raise SchedulingDataError("This verified resolution type cannot be applied automatically")
+    normalized = []
+    for operation in operations:
+        item = dict(operation)
+        if item["type"] == "EXTEND_PROJECT_DEADLINE":
+            item["deadline"] = date.fromisoformat(item["deadline"])
+        normalized.append(item)
+    candidate = apply_resolution_operations(original, normalized)
+    result = solve_schedule(candidate)
+    if result.status != "FEASIBLE":
+        raise SchedulingDataError("The selected repair no longer produces a feasible optimizer result")
+    return proposal, normalized, candidate, result, employees, shifts
+
+
+def preview_conflict_resolution_from_database(db: Session, start_date: date, end_date: date,
+                                              resolution_id: str, department_id: int | None = None,
+                                              project_id: int | None = None) -> dict[str, Any]:
+    proposal, operations, _candidate, result, _employees, _shifts = _verified_resolution_input(
+        db, start_date, end_date, resolution_id, department_id, project_id,
+    )
+    return {"status": result.status, "resolution_id": resolution_id, "resolution": proposal,
+            "persisted": False, "start_date": start_date, "end_date": end_date,
+            "assignments": result.assignments, "total_cost": result.total_cost,
+            "total_required_staff": result.total_required_staff,
+            "total_assigned_staff": result.total_assigned_staff,
+            "operations": operations}
+
+
+def apply_conflict_resolution_from_database(db: Session, start_date: date, end_date: date,
+                                            resolution_id: str, confirmed: bool,
+                                            department_id: int | None = None,
+                                            project_id: int | None = None) -> dict[str, Any]:
+    if not confirmed:
+        raise SchedulingDataError("Explicit confirmation is required to apply a conflict resolution")
+    try:
+        proposal, operations, _candidate, _first_result, _employees, _shifts = _verified_resolution_input(
+            db, start_date, end_date, resolution_id, department_id, project_id,
+        )
+        # Persist only reviewed changes to source staffing/project requirements. Hard optimizer
+        # constraints are not disabled; the candidate is solved again after these values update.
+        for operation in operations:
+            kind = operation["type"]
+            if kind == "REDUCE_STAFFING_REQUIREMENT":
+                shift = db.get(models.Shift, operation["shift_id"])
+                if shift is None or operation["value"] < 1 or operation["value"] >= shift.required_staff:
+                    raise SchedulingDataError("Staffing requirement changed since analysis; analyze again")
+                shift.required_staff = operation["value"]
+            elif kind in {"ADJUST_PROJECT_REQUIRED_HOURS", "ADJUST_PROJECT_REQUIRED_COUNT"}:
+                requirement = db.get(models.ProjectRequirement, operation["requirement_id"])
+                if requirement is None:
+                    raise SchedulingDataError("Project requirement no longer exists")
+                column = "required_hours" if operation["field"] == "required_hours" else "quantity"
+                current = getattr(requirement, column)
+                if operation["value"] >= current or operation["value"] < 0:
+                    raise SchedulingDataError("Project requirement changed since analysis; analyze again")
+                setattr(requirement, column, operation["value"])
+            elif kind == "EXTEND_PROJECT_DEADLINE":
+                project = db.get(models.Project, operation["project_id"])
+                if project is None or project.deadline is None:
+                    raise SchedulingDataError("Project deadline changed since analysis; analyze again")
+                expected = date.fromisoformat(operation["current_deadline"])
+                if project.deadline != expected:
+                    raise SchedulingDataError("Project deadline changed since analysis; analyze again")
+                project.deadline = operation["deadline"]
+                for requirement in db.scalars(select(models.ProjectRequirement).where(
+                    models.ProjectRequirement.project_id == project.id,
+                )).all():
+                    if requirement.deadline is not None:
+                        requirement.deadline = operation["deadline"]
+        db.flush()
+        data, employees_by_id, shifts_by_id = prepare_scheduling_input(
+            db, start_date, end_date, department_id, project_id,
+        )
+        result = solve_schedule(data)
+        if result.status != "FEASIBLE":
+            raise SchedulingDataError("The selected repair failed server revalidation")
+        schedule = models.Schedule(
+            name=f"Resolved schedule {start_date.isoformat()} to {end_date.isoformat()}",
+            start_date=start_date, end_date=end_date, status="generated", total_cost=result.total_cost,
+            overtime_hours=result.total_overtime_hours, scope_department_id=department_id,
+            scope_project_id=project_id,
+        )
+        db.add(schedule); db.flush()
+        for assignment in result.assignments:
+            db.add(models.ScheduleAssignment(schedule_id=schedule.id,
+                employee_id=assignment["employee_id"], shift_id=assignment["shift_id"],
+                regular_hours=assignment["regular_hours"], overtime_hours=assignment["overtime_hours"],
+                cost=assignment["cost"]))
+            db.add(models.ScheduleExplanation(schedule_id=schedule.id,
+                message="Assignment included in the revalidated feasible conflict-resolution schedule.",
+                details=json.dumps({"employee_id": assignment["employee_id"], "shift_id": assignment["shift_id"],
+                                    "resolution_id": resolution_id}, sort_keys=True)))
+        db.commit()
+        return {"status": "FEASIBLE", "persisted": True, "schedule_id": schedule.id,
+                "resolution_id": resolution_id, "resolution": proposal,
+                "assignments": result.assignments, "total_cost": result.total_cost,
+                "total_required_staff": result.total_required_staff,
+                "total_assigned_staff": result.total_assigned_staff}
+    except Exception:
+        db.rollback()
+        raise
 
 
 def resolve_conflicts_from_database(

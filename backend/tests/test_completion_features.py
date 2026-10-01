@@ -96,3 +96,75 @@ def test_apply_reschedule_rolls_back_if_replacement_fails(client, monkeypatch):
             client.post('/api/optimization/apply-reschedule', json={'schedule_id': schedule['schedule_id'], 'assignment_id': before[0]['id'], 'confirmed': True})
     after = client.get(f"/api/schedules/{schedule['schedule_id']}/assignments").json()
     assert after == before
+import pytest
+from test_optimization_integration import seeded_workforce
+
+
+def _staffing_shortage_resolution(client):
+    department = client.post('/api/departments', json={'name': 'Resolution Ops'}).json()
+    employee = client.post('/api/employees', json={'name': 'Available worker', 'email': 'resolution@example.test', 'department_id': department['id']}).json()
+    shift = client.post('/api/shifts', json={'date': '2026-10-05', 'department_id': department['id'], 'start_time': '09:00', 'end_time': '13:00', 'required_staff': 2}).json()
+    client.post('/api/availability', json={'employee_id': employee['id'], 'date': '2026-10-05', 'start_time': '00:00', 'end_time': '23:59', 'available': True})
+    request = {'start_date': '2026-10-05', 'end_date': '2026-10-05'}
+    result = client.post('/api/optimization/resolve-conflict', json=request).json()
+    proposal = next(row for row in result['resolutions'] if row['type'] == 'REDUCE_STAFFING_REQUIREMENT')
+    return request, proposal, shift
+
+
+def test_conflict_resolution_preview_and_apply_revalidate_and_persist(client):
+    request, proposal, shift = _staffing_shortage_resolution(client)
+    preview = client.post('/api/optimization/resolution-preview', json={**request, 'resolution_id': proposal['resolution_id']})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()['persisted'] is False
+    assert preview.json()['assignments']
+    applied = client.post('/api/optimization/apply-resolution', json={**request, 'resolution_id': proposal['resolution_id'], 'confirmed': True})
+    assert applied.status_code == 200, applied.text
+    assert applied.json()['persisted'] is True
+    assert client.get(f"/api/shifts/{shift['id']}").json()['required_staff'] == 1
+    assignments = client.get(f"/api/schedules/{applied.json()['schedule_id']}/assignments").json()
+    assert len(assignments) == 1
+
+
+def test_conflict_resolution_rejects_non_testable_and_unconfirmed_apply(client):
+    employee = client.post('/api/employees', json={'name': 'On leave', 'email': 'resolution-leave@example.test'}).json()
+    client.post('/api/shifts', json={'date': '2026-10-05', 'start_time': '09:00', 'end_time': '13:00', 'required_staff': 1})
+    client.post('/api/availability', json={'employee_id': employee['id'], 'date': '2026-10-05', 'start_time': '00:00', 'end_time': '23:59', 'available': True})
+    client.post('/api/leave', json={'employee_id': employee['id'], 'start_date': '2026-10-05', 'end_date': '2026-10-05', 'status': 'approved'})
+    req = {'start_date': '2026-10-05', 'end_date': '2026-10-05'}
+    analysis = client.post('/api/optimization/resolve-conflict', json=req).json()
+    proposal = next(item for item in analysis['resolutions'] if item['testable'] is False)
+    body = {**req, 'resolution_id': proposal['resolution_id']}
+    assert client.post('/api/optimization/resolution-preview', json=body).status_code == 422
+    assert client.post('/api/optimization/apply-resolution', json={**body, 'confirmed': True}).status_code == 422
+    assert client.post('/api/optimization/apply-resolution', json={**body, 'confirmed': False}).status_code == 422
+
+
+def test_conflict_resolution_stale_revalidation_preserves_input(client):
+    request, proposal, shift = _staffing_shortage_resolution(client)
+    client.put(f"/api/shifts/{shift['id']}", json={'date': '2026-10-05', 'start_time': '09:00', 'end_time': '13:00', 'required_staff': 1})
+    response = client.post('/api/optimization/apply-resolution', json={**request, 'resolution_id': proposal['resolution_id'], 'confirmed': True})
+    assert response.status_code == 422
+    assert client.get(f"/api/shifts/{shift['id']}").json()['required_staff'] == 1
+    assert client.get('/api/schedules').json() == []
+
+
+def test_conflict_resolution_rolls_back_source_change_when_schedule_persistence_fails(client, monkeypatch):
+    request, proposal, shift = _staffing_shortage_resolution(client)
+    from app.services import scheduling_service
+
+    original_solver = scheduling_service.solve_schedule
+    calls = 0
+
+    def fail_after_source_update(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('Simulated optimizer persistence failure')
+        return original_solver(*args, **kwargs)
+
+    monkeypatch.setattr(scheduling_service, 'solve_schedule', fail_after_source_update)
+    with pytest.raises(RuntimeError, match='Simulated optimizer persistence failure'):
+        client.post('/api/optimization/apply-resolution', json={**request, 'resolution_id': proposal['resolution_id'], 'confirmed': True})
+
+    assert client.get(f"/api/shifts/{shift['id']}").json()['required_staff'] == 2
+    assert client.get('/api/schedules').json() == []
